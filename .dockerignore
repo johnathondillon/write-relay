@@ -1,0 +1,27 @@
+.git
+.github
+.gocache
+.gomodcache
+bin
+data
+writerelay.yaml
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+coverage.out
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and profiling output
+*.log
+*.prof
+*.pprof
+*.trace
+
+# Editor and OS metadata
+.DS_Store
+.idea
+.vscode

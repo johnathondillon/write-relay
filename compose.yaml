@@ -1,0 +1,31 @@
+services:
+  postgres:
+    image: postgres:18
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    environment:
+      POSTGRES_DB: writerelay
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres-dev-password
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - writerelay-postgres-data:/var/lib/postgresql
+      - ./sql/postgres/001_install.sql:/docker-entrypoint-initdb.d/001_install.sql:ro
+      - ./sql/postgres/dev_setup.sql:/docker-entrypoint-initdb.d/002_dev_setup.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d writerelay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  writerelay-postgres-data:
+

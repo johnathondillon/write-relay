@@ -1,0 +1,25 @@
+/bin/
+/data/
+/.gocache/
+/.gomodcache/
+/writerelay.yaml
+/.DS_Store
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+coverage.out
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and profiling output
+*.log
+*.prof
+*.pprof
+*.trace
+
+# Editor and IDE metadata
+/.idea/
+/.vscode/

@@ -1,0 +1,20 @@
+version: 1
+
+postgres:
+  dsn_env: WRITERELAY_POSTGRES_DSN
+  slot: writerelay_slot_v1
+  publication: writerelay_publication
+  message_prefix: writerelay.v1
+  status_interval: 10s
+  create_slot_if_missing: false
+  max_transaction_events: 10000
+  max_transaction_bytes: 8388608
+
+spool:
+  path: ./data/writerelay.sqlite
+  max_event_bytes: 262144
+
+logging:
+  level: info
+  format: text
+
