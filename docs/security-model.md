@@ -20,17 +20,35 @@ not exposed on other host interfaces.
 Payloads may contain regulated or sensitive business data. Normal logs include
 transaction IDs, event counts, types/IDs when needed, and LSNs—not payloads.
 `spool list` is an explicit local administrative action and does print payloads.
+The stdout sink also prints complete payloads and is development-only.
 
 The SQLite spool must be protected like application data. The implementation
 creates parent directories with mode `0700`, applies mode `0600` to the database,
 and rejects an existing symlink at the database path. Backup, volume encryption,
 host access controls, and secure deletion remain operator responsibilities.
 
+Delivery history retains destination status, bounded safe error categories, and
+event identity, but never response bodies, authorization values, signing
+secrets, or webhook URLs. Dead-letter records remain until a future explicit
+retention policy is implemented.
+
 ## Configuration and secrets
 
 Use `dsn_env` so configuration files do not contain passwords. Resolved
 environment values are never logged or printed. Connection errors are reduced
 to a safe PostgreSQL message/SQLSTATE or a generic redacted failure.
+
+Webhook authorization and HMAC signing secrets are read from named environment
+variables at startup. The configured URL must not contain user information.
+HTTPS is required unless `allow_insecure_http` is explicitly enabled for local
+development. Redirects are disabled so credentials cannot be forwarded to a
+different origin. Network errors are reduced to bounded categories and response
+bodies are discarded rather than persisted or logged.
+
+Webhook targets are operator-controlled network destinations, so deploying
+WriteRelay with untrusted configuration would create an SSRF capability.
+Configuration files and environment variables must be restricted to trusted
+operators. Egress policy should constrain destinations in sensitive networks.
 
 The setup command interpolates only slot/publication identifiers that passed the
 strict lowercase PostgreSQL identifier rule. It never interpolates a secret and
@@ -43,9 +61,11 @@ accepted events and bytes buffered per transaction. A violation stops capture
 without acknowledgment instead of silently discarding content. SQLite has a
 bounded busy timeout and a single writer connection.
 
-Milestone 1 has no spool-size limit because there is no delivery/retention state
-machine. Operators must monitor disk and PostgreSQL retained WAL. A future limit
-must fail closed.
+Webhook requests have a bounded timeout, redirects are disabled, response bodies
+are read only to a small bound, retries have bounded delay and attempt count,
+and stored error text is capped. Milestone 2 still has no spool-size or
+retention limit. Operators must monitor disk and PostgreSQL retained WAL. A
+future limit must fail closed.
 
 ## Supply chain
 

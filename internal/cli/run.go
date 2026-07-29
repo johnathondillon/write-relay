@@ -6,13 +6,12 @@ import (
 	"io"
 	"os"
 
+	"github.com/johnathondillon/write-relay/internal/app"
 	"github.com/johnathondillon/write-relay/internal/config"
 	"github.com/johnathondillon/write-relay/internal/logging"
-	"github.com/johnathondillon/write-relay/internal/postgres"
-	sqlitespool "github.com/johnathondillon/write-relay/internal/spool/sqlite"
 )
 
-func runCommand(ctx context.Context, args []string, _ io.Writer, stderr io.Writer) error {
+func runCommand(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
 	fs, configPath := configFlagSet("run", stderr)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -28,10 +27,5 @@ func runCommand(ctx context.Context, args []string, _ io.Writer, stderr io.Write
 	if err != nil {
 		return err
 	}
-	store, err := sqlitespool.Open(ctx, cfg.Spool.Path)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	return postgres.NewReplicator(cfg, store, logger).Run(ctx)
+	return app.Run(ctx, cfg, logger, stdout)
 }

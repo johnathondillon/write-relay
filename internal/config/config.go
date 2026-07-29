@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -23,6 +25,7 @@ type Config struct {
 	Version  int            `yaml:"version"`
 	Postgres PostgresConfig `yaml:"postgres"`
 	Spool    SpoolConfig    `yaml:"spool"`
+	Delivery DeliveryConfig `yaml:"delivery"`
 	Logging  LoggingConfig  `yaml:"logging"`
 }
 
@@ -42,6 +45,32 @@ type PostgresConfig struct {
 type SpoolConfig struct {
 	Path          string `yaml:"path"`
 	MaxEventBytes int    `yaml:"max_event_bytes"`
+}
+
+type DeliveryConfig struct {
+	PollInterval        time.Duration `yaml:"-"`
+	PollIntervalValue   string        `yaml:"poll_interval"`
+	RequestTimeout      time.Duration `yaml:"-"`
+	RequestTimeoutValue string        `yaml:"request_timeout"`
+	Retry               RetryConfig   `yaml:"retry"`
+	Sinks               []SinkConfig  `yaml:"sinks"`
+}
+
+type RetryConfig struct {
+	InitialDelay      time.Duration `yaml:"-"`
+	InitialDelayValue string        `yaml:"initial_delay"`
+	MaxDelay          time.Duration `yaml:"-"`
+	MaxDelayValue     string        `yaml:"max_delay"`
+	MaxAttempts       int           `yaml:"max_attempts"`
+}
+
+type SinkConfig struct {
+	Name              string `yaml:"name"`
+	Type              string `yaml:"type"`
+	URL               string `yaml:"url"`
+	AuthorizationEnv  string `yaml:"authorization_env"`
+	SigningSecretEnv  string `yaml:"signing_secret_env"`
+	AllowInsecureHTTP bool   `yaml:"allow_insecure_http"`
 }
 
 type LoggingConfig struct {
@@ -130,6 +159,9 @@ func (c *Config) setDefaultsAndValidate() error {
 	if c.Spool.MaxEventBytes < 1 || c.Spool.MaxEventBytes > DefaultMaxEventBytes {
 		return fmt.Errorf("spool.max_event_bytes must be between 1 and %d", DefaultMaxEventBytes)
 	}
+	if err := c.Delivery.setDefaultsAndValidate(); err != nil {
+		return err
+	}
 	if c.Logging.Level == "" {
 		c.Logging.Level = "info"
 	}
@@ -143,6 +175,129 @@ func (c *Config) setDefaultsAndValidate() error {
 	}
 	if c.Logging.Format != "text" && c.Logging.Format != "json" {
 		return errors.New("logging.format must be text or json")
+	}
+	return nil
+}
+
+func (c *DeliveryConfig) setDefaultsAndValidate() error {
+	if c.PollIntervalValue == "" {
+		c.PollIntervalValue = "1s"
+	}
+	pollInterval, err := boundedDuration(
+		"delivery.poll_interval", c.PollIntervalValue, 50*time.Millisecond, time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	c.PollInterval = pollInterval
+
+	if c.RequestTimeoutValue == "" {
+		c.RequestTimeoutValue = "10s"
+	}
+	requestTimeout, err := boundedDuration(
+		"delivery.request_timeout", c.RequestTimeoutValue, 100*time.Millisecond, 2*time.Minute,
+	)
+	if err != nil {
+		return err
+	}
+	c.RequestTimeout = requestTimeout
+
+	if c.Retry.InitialDelayValue == "" {
+		c.Retry.InitialDelayValue = "1s"
+	}
+	initialDelay, err := boundedDuration(
+		"delivery.retry.initial_delay", c.Retry.InitialDelayValue, 100*time.Millisecond, time.Hour,
+	)
+	if err != nil {
+		return err
+	}
+	c.Retry.InitialDelay = initialDelay
+
+	if c.Retry.MaxDelayValue == "" {
+		c.Retry.MaxDelayValue = "5m"
+	}
+	maxDelay, err := boundedDuration(
+		"delivery.retry.max_delay", c.Retry.MaxDelayValue, 100*time.Millisecond, 24*time.Hour,
+	)
+	if err != nil {
+		return err
+	}
+	if maxDelay < initialDelay {
+		return errors.New("delivery.retry.max_delay must not be less than initial_delay")
+	}
+	c.Retry.MaxDelay = maxDelay
+	if c.Retry.MaxAttempts == 0 {
+		c.Retry.MaxAttempts = 10
+	}
+	if c.Retry.MaxAttempts < 1 || c.Retry.MaxAttempts > 1000 {
+		return errors.New("delivery.retry.max_attempts must be between 1 and 1000")
+	}
+
+	names := make(map[string]struct{}, len(c.Sinks))
+	for index := range c.Sinks {
+		sink := &c.Sinks[index]
+		path := fmt.Sprintf("delivery.sinks[%d]", index)
+		if !identifierPattern.MatchString(sink.Name) {
+			return fmt.Errorf("%s.name must match ^[a-z_][a-z0-9_]{0,62}$", path)
+		}
+		if _, exists := names[sink.Name]; exists {
+			return fmt.Errorf("%s.name %q is duplicated", path, sink.Name)
+		}
+		names[sink.Name] = struct{}{}
+		switch sink.Type {
+		case "webhook":
+			endpoint, err := url.Parse(sink.URL)
+			if err != nil || endpoint.Host == "" {
+				return fmt.Errorf("%s.url must be an absolute HTTP(S) URL", path)
+			}
+			if endpoint.User != nil || endpoint.Fragment != "" {
+				return fmt.Errorf("%s.url must not contain user information or a fragment", path)
+			}
+			switch strings.ToLower(endpoint.Scheme) {
+			case "https":
+			case "http":
+				if !sink.AllowInsecureHTTP {
+					return fmt.Errorf("%s.url requires HTTPS unless allow_insecure_http is true", path)
+				}
+			default:
+				return fmt.Errorf("%s.url must use HTTP or HTTPS", path)
+			}
+			if err := validateOptionalEnvironmentName(path+".authorization_env", sink.AuthorizationEnv); err != nil {
+				return err
+			}
+			if err := validateOptionalEnvironmentName(path+".signing_secret_env", sink.SigningSecretEnv); err != nil {
+				return err
+			}
+		case "stdout":
+			if sink.URL != "" || sink.AuthorizationEnv != "" ||
+				sink.SigningSecretEnv != "" || sink.AllowInsecureHTTP {
+				return fmt.Errorf("%s stdout sink does not accept webhook fields", path)
+			}
+		default:
+			return fmt.Errorf("%s.type must be webhook or stdout", path)
+		}
+	}
+	return nil
+}
+
+func boundedDuration(name, value string, minimum, maximum time.Duration) (time.Duration, error) {
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", name, err)
+	}
+	if duration < minimum || duration > maximum {
+		return 0, fmt.Errorf("%s must be between %s and %s", name, minimum, maximum)
+	}
+	return duration, nil
+}
+
+func validateOptionalEnvironmentName(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	envPattern := regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	if !envPattern.MatchString(value) {
+		return fmt.Errorf("%s must be an uppercase environment variable name", name)
 	}
 	return nil
 }

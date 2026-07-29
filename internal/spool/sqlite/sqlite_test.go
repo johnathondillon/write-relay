@@ -3,12 +3,14 @@ package sqlite
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/jackc/pglogrepl"
+	"github.com/johnathondillon/write-relay/internal/delivery"
 	"github.com/johnathondillon/write-relay/internal/spool"
 )
 
@@ -122,6 +124,145 @@ func TestZeroEventBatchAdvancesCheckpoint(t *testing.T) {
 	}
 }
 
+func TestMigratesVersionOneSpool(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "spool.sqlite")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := migrations.ReadFile("migrations/001_initial.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, string(initial)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := Open(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	version, err := store.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2 {
+		t.Fatalf("schema version = %d, want 2", version)
+	}
+}
+
+func TestSinkBackfillAtomicCreationAndOrdering(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "spool.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	first := testBatchWithIdentity("urn:test", "first", 0x100)
+	if _, err := store.PersistCommittedBatch(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	sinks := []delivery.SinkRegistration{
+		testSink("sink_a", "a"),
+		testSink("sink_b", "b"),
+	}
+	if err := store.ConfigureSinks(ctx, sinks); err != nil {
+		t.Fatal(err)
+	}
+	second := testBatchWithIdentity("urn:test", "second", 0x200)
+	if _, err := store.PersistCommittedBatch(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := store.ListDeliveries(ctx, "", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("delivery count = %d, want 4", len(rows))
+	}
+	item, found, err := store.NextDueDelivery(ctx, time.Now().Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("next delivery: found=%v err=%v", found, err)
+	}
+	if item.ID != "first" || item.SinkName != "sink_a" {
+		t.Fatalf("unexpected first delivery: %#v", item)
+	}
+
+	at := time.Now().UTC()
+	if err := store.MarkFailed(
+		ctx, item, 1, false, at.Add(time.Hour), "temporary", 503, at,
+	); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = store.NextDueDelivery(ctx, at.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("next unblocked sink: found=%v err=%v", found, err)
+	}
+	if item.ID != "first" || item.SinkName != "sink_b" {
+		t.Fatalf("retry wait did not preserve per-sink order: %#v", item)
+	}
+	if err := store.MarkDelivered(ctx, item, 1, 204, at); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = store.NextDueDelivery(ctx, at.Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("next sink_b delivery: found=%v err=%v", found, err)
+	}
+	if item.ID != "second" || item.SinkName != "sink_b" {
+		t.Fatalf("unexpected independently ordered delivery: %#v", item)
+	}
+}
+
+func TestSinkConflictRemovalAndRedrive(t *testing.T) {
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "spool.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	sink := testSink("orders", "target-a")
+	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{sink}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.PersistCommittedBatch(
+		ctx, testBatchWithIdentity("urn:test", "one", 0x100),
+	); err != nil {
+		t.Fatal(err)
+	}
+	conflict := testSink("orders", "target-b")
+	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{conflict}); !errors.Is(err, delivery.ErrSinkConfigurationConflict) {
+		t.Fatalf("expected configuration conflict, got %v", err)
+	}
+	if err := store.ConfigureSinks(ctx, nil); err == nil {
+		t.Fatal("expected removal with pending delivery to fail")
+	}
+	item, found, err := store.NextDueDelivery(ctx, time.Now().Add(time.Second))
+	if err != nil || !found {
+		t.Fatalf("next delivery: found=%v err=%v", found, err)
+	}
+	now := time.Now().UTC()
+	if err := store.MarkFailed(ctx, item, 1, true, now, "bad request", 400, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RedriveDelivery(ctx, "orders", "urn:test", "one", now); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.ListDeliveries(ctx, "retry_wait", 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Attempts != 0 || rows[0].LastError != "" {
+		t.Fatalf("unexpected redriven delivery: %#v", rows)
+	}
+}
+
 func testBatch(payload string) spool.CommittedBatch {
 	commitTime := time.Date(2026, 7, 27, 20, 24, 0, 0, time.UTC)
 	digest := sha256.Sum256([]byte(payload))
@@ -145,4 +286,24 @@ func testBatch(payload string) spool.CommittedBatch {
 		MessageIndex:  0,
 	}}
 	return batch
+}
+
+func testBatchWithIdentity(source, id string, lsn uint64) spool.CommittedBatch {
+	payload := `{"specversion":"1.0","id":"` + id + `","source":"` + source + `","type":"created"}`
+	batch := testBatch(payload)
+	batch.TransactionID = uint32(lsn)
+	batch.CommitLSN = pglogrepl.LSN(lsn)
+	batch.CommitEndLSN = pglogrepl.LSN(lsn + 0x20)
+	batch.Events[0].Source = source
+	batch.Events[0].ID = id
+	batch.Events[0].TransactionID = batch.TransactionID
+	batch.Events[0].CommitLSN = batch.CommitLSN
+	batch.Events[0].CommitEndLSN = batch.CommitEndLSN
+	return batch
+}
+
+func testSink(name, target string) delivery.SinkRegistration {
+	return delivery.SinkRegistration{
+		Name: name, Type: "webhook", ConfigSHA256: sha256.Sum256([]byte(target)),
+	}
 }

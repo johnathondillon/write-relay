@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -19,6 +21,7 @@ import (
 	"github.com/jackc/pglogrepl"
 	"github.com/jackc/pgx/v5"
 	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/delivery"
 	commitpostgres "github.com/johnathondillon/write-relay/internal/postgres"
 	sqlitespool "github.com/johnathondillon/write-relay/internal/spool/sqlite"
 	install "github.com/johnathondillon/write-relay/sql/postgres"
@@ -35,6 +38,29 @@ func TestTransactionalCapture(t *testing.T) {
 	if len(slot) > 63 || len(publication) > 63 {
 		t.Fatal("generated identifier too long")
 	}
+	var webhookMu sync.Mutex
+	webhookAttempts := make(map[string]int)
+	webhookServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		defer request.Body.Close()
+		var envelope struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(request.Body).Decode(&envelope); err != nil {
+			http.Error(w, "invalid event", http.StatusBadRequest)
+			return
+		}
+		webhookMu.Lock()
+		webhookAttempts[envelope.ID]++
+		attempt := webhookAttempts[envelope.ID]
+		webhookMu.Unlock()
+		if strings.Contains(envelope.ID, "retry") && attempt == 1 {
+			http.Error(w, "try again", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer webhookServer.Close()
+
 	cfg := config.Config{
 		Version: config.CurrentVersion,
 		Postgres: config.PostgresConfig{
@@ -49,6 +75,19 @@ func TestTransactionalCapture(t *testing.T) {
 		Spool: config.SpoolConfig{
 			Path:          filepath.Join(t.TempDir(), "capture.sqlite"),
 			MaxEventBytes: config.DefaultMaxEventBytes,
+		},
+		Delivery: config.DeliveryConfig{
+			PollInterval:   20 * time.Millisecond,
+			RequestTimeout: time.Second,
+			Retry: config.RetryConfig{
+				InitialDelay: 50 * time.Millisecond,
+				MaxDelay:     time.Second,
+				MaxAttempts:  3,
+			},
+			Sinks: []config.SinkConfig{{
+				Name: "integration_webhook", Type: "webhook", URL: webhookServer.URL,
+				AllowInsecureHTTP: true,
+			}},
 		},
 		Logging: config.LoggingConfig{Level: "info", Format: "text"},
 	}
@@ -105,20 +144,43 @@ func TestTransactionalCapture(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	webhookSender, registration, err := delivery.NewWebhookSender(
+		cfg.Delivery.Sinks[0], cfg.Delivery.RequestTimeout,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{registration}); err != nil {
+		t.Fatal(err)
+	}
 	runCtx, stopRun := context.WithCancel(context.Background())
-	runDone := make(chan error, 1)
+	runDone := make(chan error, 2)
 	go func() {
 		runDone <- commitpostgres.NewReplicator(cfg, store, logger).Run(runCtx)
+	}()
+	go func() {
+		worker := delivery.NewWorker(
+			store,
+			map[string]delivery.Sink{"integration_webhook": webhookSender},
+			cfg.Delivery.PollInterval, cfg.Delivery.Retry.InitialDelay,
+			cfg.Delivery.Retry.MaxDelay, cfg.Delivery.Retry.MaxAttempts, logger,
+		)
+		runDone <- worker.Run(runCtx)
 	}()
 	var stopOnce sync.Once
 	var runErr error
 	stopAndWait := func() {
 		stopOnce.Do(func() {
 			stopRun()
-			select {
-			case runErr = <-runDone:
-			case <-time.After(5 * time.Second):
-				runErr = fmt.Errorf("replicator did not shut down gracefully")
+			for component := 0; component < 2; component++ {
+				select {
+				case err := <-runDone:
+					if err != nil && runErr == nil {
+						runErr = err
+					}
+				case <-time.After(5 * time.Second):
+					runErr = fmt.Errorf("runtime component did not shut down gracefully")
+				}
 			}
 		})
 	}
@@ -143,6 +205,7 @@ func TestTransactionalCapture(t *testing.T) {
 	if payload["id"] != committedID || committed.CommitEndLSN == "" || committed.TransactionID == 0 {
 		t.Fatalf("stored event metadata is incomplete: %#v", committed)
 	}
+	waitForWebhookAttempts(t, committedID, 1, &webhookMu, webhookAttempts)
 
 	rolledBackID := "evt-rolled-back-" + suffix
 	rolledBackOrderID := "ord-rolled-back-" + suffix
@@ -155,6 +218,12 @@ func TestTransactionalCapture(t *testing.T) {
 	rows, _ = store.ListEvents(ctx, 100)
 	if findEvent(rows, rolledBackID) != nil {
 		t.Fatalf("rolled-back event %q reached the spool", rolledBackID)
+	}
+	webhookMu.Lock()
+	rolledBackAttempts := webhookAttempts[rolledBackID]
+	webhookMu.Unlock()
+	if rolledBackAttempts != 0 {
+		t.Fatalf("rolled-back event %q reached webhook", rolledBackID)
 	}
 	var rolledBackBusinessRows int
 	if err := admin.QueryRow(ctx,
@@ -180,6 +249,13 @@ func TestTransactionalCapture(t *testing.T) {
 		first.CommitEndLSN != second.CommitEndLSN {
 		t.Fatalf("transaction order/metadata not preserved: first=%#v second=%#v", first, second)
 	}
+	waitForWebhookAttempts(t, secondID, 1, &webhookMu, webhookAttempts)
+
+	retryID := "evt-retry-" + suffix
+	inTransaction(t, ctx, admin, "ord-retry-"+suffix, true,
+		[]string{eventJSON(retryID, "order.retry")})
+	waitForWebhookAttempts(t, retryID, 2, &webhookMu, webhookAttempts)
+	waitForDelivered(t, ctx, store, retryID, 2)
 
 	durable, err := store.LastDurableLSN(ctx)
 	if err != nil || durable == 0 {
@@ -191,6 +267,55 @@ func TestTransactionalCapture(t *testing.T) {
 	if runErr != nil {
 		t.Fatalf("replicator shutdown: %v", runErr)
 	}
+}
+
+func waitForWebhookAttempts(
+	t *testing.T,
+	id string,
+	want int,
+	mu *sync.Mutex,
+	attempts map[string]int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		got := attempts[id]
+		mu.Unlock()
+		if got >= want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d webhook attempts for %q", want, id)
+}
+
+func findDelivered(rows []sqlitespool.DeliveryRow, id string, attempts int) bool {
+	for _, row := range rows {
+		if row.ID == id && row.State == "delivered" && row.Attempts == attempts {
+			return true
+		}
+	}
+	return false
+}
+
+func waitForDelivered(
+	t *testing.T,
+	ctx context.Context,
+	store *sqlitespool.Store,
+	id string,
+	attempts int,
+) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := store.ListDeliveries(ctx, "delivered", 100)
+		if err == nil && findDelivered(rows, id, attempts) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for durable delivery state for %q", id)
 }
 
 func assertSQLRejects(t *testing.T, ctx context.Context, conn *pgx.Conn, payload string) {

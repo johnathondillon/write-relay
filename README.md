@@ -4,18 +4,19 @@ WriteRelay is an architectural proof for PostgreSQL-first transactional event
 transport. An application emits a structured event inside its PostgreSQL
 transaction. A Go daemon reads committed logical messages from WAL and commits
 them to a durable local SQLite spool before acknowledging the transaction's WAL
-position.
+position. It then creates durable per-sink delivery records and sends events to
+configured stdout or HTTP webhook sinks with bounded retries.
 
 > WriteRelay provides atomic event creation with a PostgreSQL transaction, a
 > durable relay handoff, and at-least-once external delivery.
 
-Milestones 0 and 1 implement capture only. There are no external delivery sinks
-yet. WriteRelay does not claim exactly-once processing, global ordering, or
-atomicity with an external broker.
+Milestone 2 adds ordered at-least-once webhook delivery. WriteRelay does not
+claim exactly-once processing, global ordering, or atomicity with an external
+broker.
 
 ## Status
 
-This repository is a Milestone 1 architectural proof, not a production-ready
+This repository is a Milestone 2 architectural proof, not a production-ready
 delivery system. Its public project name is **WriteRelay**, its repository name
 is `write-relay`, and its Go module path is
 `github.com/johnathondillon/write-relay`.
@@ -37,6 +38,24 @@ needs CI coverage.
 
 The spool is replay-safe on `(source, id)`. Identical content is accepted as a
 replay; different content for the same identity stops capture.
+
+## How delivery works
+
+1. On startup, the daemon registers each configured sink in SQLite. A new sink
+   receives pending records for existing events; changing a sink's type or
+   target requires a new sink name.
+2. New event rows and their active-sink delivery rows commit in the same SQLite
+   transaction.
+3. One worker selects the oldest non-terminal event independently for each sink.
+4. A `2xx` webhook response marks delivery complete. Network failures, `408`,
+   `425`, `429`, and `5xx` responses retry with bounded exponential backoff and
+   a bounded `Retry-After` value.
+5. Other HTTP responses and exhausted retries enter retained `dead_letter`
+   state. Operators can inspect and explicitly redrive them.
+
+Webhook requests contain the original event bytes and a stable
+`Idempotency-Key`. A crash after the destination accepts a request but before
+SQLite records success can cause a duplicate request with the same key.
 
 ## Local quick start
 
@@ -79,6 +98,68 @@ psql 'postgres://writerelay_app:dev-app-password@localhost:5432/writerelay?sslmo
 
 `evt-example-rolled-back` must not appear in the spool.
 
+## Configure delivery
+
+Capture-only mode uses `sinks: []`. For a local development stream, configure:
+
+```yaml
+delivery:
+  poll_interval: 1s
+  request_timeout: 10s
+  retry:
+    initial_delay: 1s
+    max_delay: 5m
+    max_attempts: 10
+  sinks:
+    - name: development
+      type: stdout
+```
+
+The stdout sink prints full payloads and is intended only for development. A
+webhook sink uses HTTPS by default:
+
+```yaml
+delivery:
+  poll_interval: 1s
+  request_timeout: 10s
+  retry:
+    initial_delay: 1s
+    max_delay: 5m
+    max_attempts: 10
+  sinks:
+    - name: orders_webhook
+      type: webhook
+      url: https://events.example.com/writerelay
+      authorization_env: WRITERELAY_WEBHOOK_AUTHORIZATION
+      signing_secret_env: WRITERELAY_WEBHOOK_SIGNING_SECRET
+```
+
+`authorization_env` should resolve to the complete `Authorization` header
+value. When `signing_secret_env` is set, WriteRelay adds
+`X-WriteRelay-Timestamp` and an HMAC-SHA256
+`X-WriteRelay-Signature: v1=<hex>` over `<timestamp>.<raw-body>`. Redirects are
+not followed.
+
+Inspect delivery state:
+
+```bash
+go run ./cmd/writerelayd spool deliveries \
+  --config ./writerelay.yaml \
+  --state dead_letter \
+  --limit 20
+```
+
+After correcting the destination or event handling, explicitly redrive one
+dead-letter record:
+
+```bash
+go run ./cmd/writerelayd spool redrive \
+  --config ./writerelay.yaml \
+  --sink orders_webhook \
+  --source urn:service:billing \
+  --id evt-example-committed
+```
+
 The Compose initialization installs the SQL function, development roles, empty
 publication, and example `orders` table. `make setup` validates those objects and
 creates the missing `pgoutput` slot. It never drops or recreates an existing
@@ -87,8 +168,9 @@ object automatically.
 ## Configuration
 
 Configuration is strict YAML: unknown fields, unsupported versions, invalid
-identifiers, and unsafe bounds are rejected. Secrets should be provided through
-the configured environment variable.
+identifiers, unsafe URLs, duplicate sinks, and unsafe bounds are rejected.
+Database, authorization, and signing secrets should be provided through their
+configured environment variables.
 
 The defaults cap each event at 256 KiB, each PostgreSQL transaction at 10,000
 accepted events and 8 MiB of accepted event bytes, and standby status intervals
@@ -110,8 +192,10 @@ make postgres-down
 ```
 
 Integration tests use Docker Compose and prove committed capture, rollback
-absence, ordering within a transaction, durable checkpoint acknowledgment, and
-graceful shutdown. Focused SQLite tests cover replay and identity conflicts.
+absence, ordering within a transaction, durable checkpoint acknowledgment,
+webhook delivery/retry, and graceful shutdown. Focused tests cover replay,
+identity conflicts, sink backfill, per-sink order, retry/dead-letter state,
+redrive, redirects, signatures, timeouts, and crash-window duplicates.
 
 ## Documentation
 

@@ -7,7 +7,9 @@
 > **Implemented scope:** Milestones 0 and 1 prove that a local PostgreSQL
 > transaction can emit a structured event into WAL and the Go daemon can capture
 > the committed event into a durable SQLite spool before acknowledging its WAL
-> position. A rolled-back event never reaches the spool.
+> position. A rolled-back event never reaches the spool. Milestone 2 adds
+> durable per-sink state plus ordered stdout and HTTP webhook delivery with
+> retry, dead-letter, inspection, and redrive.
 
 ---
 
@@ -43,7 +45,9 @@ Application transaction
        Delivery workers and external sinks
 ```
 
-The first release is not a general-purpose CDC platform. It transports explicit application-defined domain events.
+The first release is not a general-purpose CDC platform. It transports explicit
+application-defined domain events and delivers them with an at-least-once
+contract.
 
 ---
 
@@ -187,11 +191,15 @@ Support for protocol versions 2 through 4 can be added only after the basic dura
 - Docker Compose local environment.
 - Unit and integration tests.
 - Architecture, correctness, security, and contribution documentation.
+- Durable per-sink delivery records created atomically with captured events.
+- One ordered delivery worker with independent per-sink progress.
+- Stdout development and HTTP webhook sinks.
+- Bounded retry, `Retry-After`, retained dead-letter state, inspection, and
+  explicit redrive.
 
 ## Explicitly out of scope for the current execution target
 
 - Kafka, SQS, SNS, RabbitMQ, NATS, Pub/Sub, Event Hubs, or Kinesis.
-- Production webhook delivery.
 - A UI or admin dashboard.
 - MySQL, SQL Server, Oracle, MongoDB, or SQLite source adapters.
 - Kubernetes operators or Helm charts.
@@ -201,6 +209,7 @@ Support for protocol versions 2 through 4 can be added only after the basic dura
 - Event transformations.
 - Multi-tenant control planes.
 - Horizontal delivery scaling.
+- Automatic event deletion or retention.
 - Global ordering.
 - Two-phase commit decoding.
 - Streaming of in-progress PostgreSQL transactions.
@@ -609,6 +618,27 @@ or a small internal test helper that allows integration tests to inspect capture
 
 Do not implement event deletion yet. Retention begins after a delivery state machine exists.
 
+## 10.4 Delivery schema and state
+
+Schema migration version 2 adds durable sink identity and a composite delivery
+record keyed by `(event_sequence, sink_id)`. New event and active-sink delivery
+rows commit together. Registering a new sink backfills every existing event in
+the same SQLite transaction.
+
+Delivery states are:
+
+```text
+pending
+  ├─ transient failure ─► retry_wait ─► pending attempt
+  ├─ success ───────────► delivered
+  └─ permanent/exhausted failure ─────► dead_letter
+
+dead_letter ── explicit operator redrive ──► retry_wait
+```
+
+`delivered` and `dead_letter` are retained terminal states. There is no event
+deletion in Milestone 2.
+
 ---
 
 # 11. CLI and configuration
@@ -621,13 +651,10 @@ Commands:
 writerelayd run --config ./writerelay.yaml
 writerelayd doctor --config ./writerelay.yaml
 writerelayd setup --config ./writerelay.yaml --create-slot
-writerelayd version
-```
-
-Optional for Milestone 1:
-
-```text
 writerelayd spool list --config ./writerelay.yaml --limit 20
+writerelayd spool deliveries --config ./writerelay.yaml --state dead_letter
+writerelayd spool redrive --config ./writerelay.yaml --sink NAME --source SOURCE --id ID
+writerelayd version
 ```
 
 ## 11.1 Example configuration
@@ -646,6 +673,15 @@ postgres:
 spool:
   path: ./data/writerelay.sqlite
   max_event_bytes: 262144
+
+delivery:
+  poll_interval: 1s
+  request_timeout: 10s
+  retry:
+    initial_delay: 1s
+    max_delay: 5m
+    max_attempts: 10
+  sinks: []
 
 logging:
   level: info
@@ -693,6 +729,7 @@ documentation boundaries:
 │   ├── app/
 │   ├── cli/
 │   ├── config/
+│   ├── delivery/
 │   ├── event/
 │   ├── logging/
 │   ├── postgres/
@@ -818,6 +855,13 @@ Put these in `docs/correctness.md` and make them visible in code reviews.
 10. Logs never contain PostgreSQL passwords or full secret DSNs.
 11. The project never presents at-least-once delivery as exactly once.
 12. Shutdown is graceful: stop receiving new work, finish or roll back the current SQLite transaction, send no speculative acknowledgment, and close resources.
+13. Every new event and all active-sink delivery rows commit atomically.
+14. Pending or retrying earlier events block later events for that sink.
+15. A destination success is not terminal until SQLite records `delivered`.
+16. An unrecorded destination success remains eligible with the same idempotency
+    key and may be delivered more than once.
+17. Sink target changes cannot silently reuse a durable sink name.
+18. Redirects never forward webhook credentials.
 
 ---
 
@@ -872,7 +916,7 @@ Commands should fail when their underlying task fails.
 
 # 16. Milestone 1 — Transactional capture to durable spool
 
-Complete all items in this milestone during the current coding session.
+Milestone 1 is complete. This section remains the capture contract.
 
 ## 16.1 SQL and setup
 
@@ -988,41 +1032,43 @@ Use bounded polling helpers in integration tests. Do not use arbitrary long slee
 
 Milestone 1 is complete only when all of the following are true:
 
-- [ ] `go build ./...` passes.
-- [ ] `go test ./...` passes.
-- [ ] `go vet ./...` passes.
-- [ ] Formatting checks pass.
-- [ ] Docker Compose starts a healthy PostgreSQL instance with logical replication enabled.
-- [ ] `writerelayd doctor` gives a useful pass/fail report without exposing secrets.
-- [ ] The SQL installation script succeeds on the local target PostgreSQL version.
-- [ ] The empty publication exists and contains no tables.
-- [ ] The replication slot uses `pgoutput`.
-- [ ] A committed event reaches SQLite.
-- [ ] A rolled-back event does not reach SQLite.
-- [ ] Multiple events in one transaction retain message order.
-- [ ] SQLite commits before the daemon advances the durable acknowledged LSN.
-- [ ] Keepalive replies do not acknowledge the server WAL end speculatively.
-- [ ] Replaying identical event content does not duplicate it.
-- [ ] Conflicting content for the same identity raises a typed error.
-- [ ] Graceful shutdown leaves the spool valid and does not acknowledge unpersisted data.
-- [ ] README quick-start commands have been executed or explicitly marked unverified.
-- [ ] `docs/implementation-plan.md` accurately reflects completed and remaining work.
+- [x] `go build ./...` passes.
+- [x] `go test ./...` passes.
+- [x] `go vet ./...` passes.
+- [x] Formatting checks pass.
+- [x] Docker Compose starts a healthy PostgreSQL instance with logical replication enabled.
+- [x] `writerelayd doctor` gives a useful pass/fail report without exposing secrets.
+- [x] The SQL installation script succeeds on the local target PostgreSQL version.
+- [x] The empty publication exists and contains no tables.
+- [x] The replication slot uses `pgoutput`.
+- [x] A committed event reaches SQLite.
+- [x] A rolled-back event does not reach SQLite.
+- [x] Multiple events in one transaction retain message order.
+- [x] SQLite commits before the daemon advances the durable acknowledged LSN.
+- [x] Keepalive replies do not acknowledge the server WAL end speculatively.
+- [x] Replaying identical event content does not duplicate it.
+- [x] Conflicting content for the same identity raises a typed error.
+- [x] Graceful shutdown leaves the spool valid and does not acknowledge unpersisted data.
+- [x] README quick-start commands have been executed or explicitly marked unverified.
+- [x] `docs/implementation-plan.md` accurately reflects completed and remaining work.
 
 Do not mark the milestone complete merely because package skeletons exist.
 
 ---
 
-# 18. Later roadmap — do not implement during the initial scaffold
+# 18. Delivery milestone and later roadmap
 
 ## Milestone 2 — Delivery engine
 
-- Add `Sink` interface.
-- Add durable per-sink delivery records.
-- Add ordered single-worker dispatcher.
-- Add stdout development sink.
-- Add production webhook sink.
-- Add exponential retry, `Retry-After`, timeout, and dead-letter state.
-- Do not delete an event until every configured durable delivery reaches a terminal retained state.
+- [x] Add `Sink` interface.
+- [x] Add durable per-sink delivery records.
+- [x] Add ordered single-worker dispatcher.
+- [x] Add stdout development sink.
+- [x] Add HTTP webhook sink.
+- [x] Add exponential retry, bounded `Retry-After`, timeout, and dead-letter state.
+- [x] Add delivery inspection and explicit dead-letter redrive.
+- [x] Do not delete events; retain both terminal states for a later retention
+  milestone.
 
 ## Milestone 3 — Failure injection and recovery
 
@@ -1187,7 +1233,8 @@ Do not add an ORM.
 
 # 21. Expected README quick start
 
-By the end of Milestone 1, the README should make this local proof possible.
+The README must keep the Milestone 1 capture proof executable and include
+Milestone 2 sink configuration, delivery inspection, and redrive.
 
 Example shape:
 
