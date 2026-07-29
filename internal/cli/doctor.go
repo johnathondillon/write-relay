@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/delivery"
 	"github.com/johnathondillon/write-relay/internal/postgres"
 	sqlitespool "github.com/johnathondillon/write-relay/internal/spool/sqlite"
 )
@@ -29,6 +30,7 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return err
 	}
 	checks = append(checks, spoolChecks(ctx, cfg)...)
+	checks = append(checks, deliveryChecks(cfg)...)
 	failed := false
 	for _, check := range checks {
 		fmt.Fprintf(stdout, "%-5s %-30s %s\n", check.Status, check.Name, check.Detail)
@@ -40,6 +42,31 @@ func doctorCommand(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return fmt.Errorf("one or more doctor checks failed")
 	}
 	return nil
+}
+
+func deliveryChecks(cfg config.Config) []postgres.Check {
+	if len(cfg.Delivery.Sinks) == 0 {
+		return []postgres.Check{{
+			Name: "delivery sinks", Status: "pass", Detail: "capture-only mode",
+		}}
+	}
+	checks := make([]postgres.Check, 0, len(cfg.Delivery.Sinks))
+	for _, sink := range cfg.Delivery.Sinks {
+		if sink.Type == "webhook" {
+			_, _, err := delivery.NewWebhookSender(sink, cfg.Delivery.RequestTimeout)
+			if err != nil {
+				checks = append(checks, postgres.Check{
+					Name: "delivery " + sink.Name, Status: "fail", Detail: err.Error(),
+				})
+				continue
+			}
+		}
+		checks = append(checks, postgres.Check{
+			Name: "delivery " + sink.Name, Status: "pass",
+			Detail: "configuration and secret references are valid",
+		})
+	}
+	return checks
 }
 
 func spoolChecks(ctx context.Context, cfg config.Config) []postgres.Check {

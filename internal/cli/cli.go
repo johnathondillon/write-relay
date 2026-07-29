@@ -11,10 +11,10 @@ import (
 const usage = `usage: writerelayd <command> [options]
 
 commands:
-  run       capture committed PostgreSQL events
+  run       capture committed events and run configured delivery sinks
   doctor    inspect configuration and dependencies
   setup     install database objects and optionally create a slot
-  spool     inspect the local durable spool
+  spool     inspect or redrive the local durable spool
   version   print build version
 `
 

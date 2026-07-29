@@ -14,7 +14,28 @@ spool:
   path: ./data/writerelay.sqlite
   max_event_bytes: 262144
 
+delivery:
+  poll_interval: 1s
+  request_timeout: 10s
+  retry:
+    initial_delay: 1s
+    max_delay: 5m
+    max_attempts: 10
+  sinks: []
+
+# Development-only example:
+#  sinks:
+#    - name: development
+#      type: stdout
+#
+# Webhook example:
+#  sinks:
+#    - name: orders_webhook
+#      type: webhook
+#      url: https://events.example.com/writerelay
+#      authorization_env: WRITERELAY_WEBHOOK_AUTHORIZATION
+#      signing_secret_env: WRITERELAY_WEBHOOK_SIGNING_SECRET
+
 logging:
   level: info
   format: text
-

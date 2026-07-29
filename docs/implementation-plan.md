@@ -4,9 +4,10 @@ Last synchronized: 2026-07-27.
 
 ## Current execution target
 
-Scaffold the repository and prove that a committed PostgreSQL transactional
-logical message reaches a durable SQLite spool before WAL acknowledgment, while
-a rolled-back message never reaches the spool.
+Prove that every captured event receives a durable per-sink delivery record,
+that one ordered worker can deliver the event to an HTTP webhook, and that
+retry, dead-letter, replay, and shutdown behavior preserve an honest
+at-least-once contract.
 
 ## Milestone 0 — repository scaffold
 
@@ -40,6 +41,23 @@ a rolled-back message never reaches the spool.
 - [x] Docker-tagged end-to-end harness for commit, rollback, order, ACK checkpoint,
   and shutdown.
 
+## Milestone 2 — ordered delivery
+
+- [x] Versioned SQLite migration for durable sinks and per-event delivery state.
+- [x] Atomic delivery-record creation for new events and safe backfill when a
+  sink is first configured.
+- [x] One worker that preserves event order independently for every sink.
+- [x] Development stdout sink and HTTP webhook sink with stable idempotency keys,
+  bounded requests,
+  optional authorization/signing secrets, and redirects disabled.
+- [x] Bounded exponential retry and `Retry-After` handling for transient failures
+  plus retained dead-letter state for permanent or exhausted failures.
+- [x] Explicit inspection and redrive commands for operators.
+- [x] Crash/replay, ordering, retry, dead-letter, configuration, and graceful
+  shutdown tests.
+- [x] Runtime, doctor, examples, architecture, correctness, security, and public
+  documentation synchronized with delivery behavior.
+
 ## Verification record
 
 This section records only commands actually executed in this workspace.
@@ -60,7 +78,9 @@ This section records only commands actually executed in this workspace.
 - [x] `docker compose up -d --wait postgres` started healthy PostgreSQL 18.4
   with logical replication enabled.
 - [x] `go test -tags=integration -count=1 -v ./tests/integration/...`
-  passed against PostgreSQL 18.4.
+  passed against PostgreSQL 18.4, including committed webhook delivery, rollback
+  absence at the destination, transient `503` retry, durable success state, and
+  two-component graceful shutdown.
 - [x] The current idempotent SQL installation ran, rejected a non-object,
   non-string identity, and oversized payload, and left an empty publication.
 - [x] A transaction containing business SQL plus an event committed and reached
@@ -73,22 +93,28 @@ This section records only commands actually executed in this workspace.
   replication slot, and focused tests proved persist-before-ACK/no-ACK-on-error.
 - [x] Identical replay, conflicting identity, atomic rollback, zero-event
   checkpoint, reopen, and graceful shutdown tests passed.
+- [x] Schema migration from version 1 to version 2, sink backfill, atomic
+  delivery creation, durable target conflict, per-sink ordering, independent
+  sink progress, retry/dead-letter, redrive, stdout, webhook identity,
+  authorization, signature, redirect, timeout, and crash-window tests passed.
+- [x] `spool deliveries` inspection and explicit `spool redrive` were exercised
+  in the CLI unit suite.
 - [x] README `setup`, `doctor`, committed SQL, rollback SQL, and `spool list`
   commands were executed successfully with the documented development roles.
 - [x] The multi-stage Docker image built and its non-root runtime executed the
-  default version command.
+  default version command after Milestone 2.
 
 ## Deliberately deferred
 
 - PostgreSQL 14–17 CI matrix and managed-service compatibility research.
 - Deterministic process-crash failpoints beyond focused replay tests.
-- Delivery records, sinks, retries, retention/deletion, UI, other databases,
-  protocol versions 2–4, two-phase commit, and transaction streaming.
+- Event deletion/retention, UI, non-webhook sinks, other databases, protocol
+  versions 2–4, two-phase commit, and transaction streaming.
 - SBOM generation, metrics, and spool size policy.
 
 ## Next milestone
 
-Milestone 2 is the delivery state machine: durable per-sink records, one ordered
-worker, explicit retry/dead-letter behavior, and no event deletion until every
-delivery reaches a retained terminal state. It should begin only after the
-Milestone 1 verification record is fully green.
+Milestone 3 is deterministic process-level failure injection around capture,
+request, destination acceptance, and local success recording. Explicit
+retention and spool-size policy remain later work after those recovery paths are
+proven.

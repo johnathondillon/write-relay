@@ -19,6 +19,21 @@
 11. At-least-once behavior is never presented as exactly once.
 12. Graceful shutdown persists no incomplete PostgreSQL transaction and sends no
     speculative acknowledgment.
+13. Every newly inserted event and its delivery records for all active sinks
+    commit in the same SQLite transaction.
+14. A sink's name, type, and non-secret target fingerprint form durable identity;
+    a target cannot silently change underneath pending events.
+15. Removing a sink with non-terminal deliveries is rejected.
+16. A later event is not delivered while an earlier event for the same sink is
+    pending or waiting to retry.
+17. A delivery is terminal only after a successful sink result is durably marked
+    `delivered`, or after it is durably retained as `dead_letter`.
+18. A crash after a destination accepts an event but before local success is
+    recorded leaves the same delivery eligible with the same idempotency key.
+19. Webhook redirects are never followed with authorization or signing
+    credentials.
+20. Dead-letter redrive is explicit, resets attempts, retains the event, and
+    returns it to the ordered state machine.
 
 ## Answers required by Milestone 1
 
@@ -56,7 +71,16 @@ Unit tests cover validation, state transitions, raw logical-message decoding,
 batch durability before ACK, keepalive status positions, atomic spool rollback,
 reopen, identical replay, conflicting identity, and zero-event checkpoints.
 
+Milestone 2 unit tests cover version-1-to-version-2 spool migration, sink
+backfill, atomic delivery creation, durable sink-configuration conflicts,
+per-sink ordering, independent sink progress, retry scheduling, maximum
+attempts, permanent failure, dead-letter redrive, stable webhook idempotency,
+authorization, HMAC signatures, redirect refusal, timeouts, stdout delivery, and
+the duplicate crash window when success cannot be recorded.
+
 The tagged integration test uses bounded polling and a committed marker after a
 rollback. Seeing the marker before checking absence proves the rolled-back
-identity was not merely delayed.
-
+identity was not merely delayed. It also runs the delivery worker against a
+bounded local webhook, proves a committed event reaches the destination, proves
+the rolled-back event does not, and observes a transient `503` retry reaching
+durable `delivered` state.
