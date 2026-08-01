@@ -34,6 +34,8 @@
     credentials.
 20. Dead-letter redrive is explicit, resets attempts, retains the event, and
     returns it to the ordered state machine.
+21. Failure hooks are inert unless directly injected in code; production
+    configuration and environment variables cannot activate them.
 
 ## Answers required by Milestone 1
 
@@ -84,3 +86,27 @@ identity was not merely delayed. It also runs the delivery worker against a
 bounded local webhook, proves a committed event reaches the destination, proves
 the rolled-back event does not, and observes a transient `503` retry reaching
 durable `delivered` state.
+
+## Answers required by Milestone 3
+
+1. Termination before `BeginTx` leaves the initialized spool and sink
+   registration intact but creates no event, delivery, or checkpoint.
+2. Termination after the first event and delivery insert leaves no partial batch
+   because the SQLite transaction is rolled back by crash recovery.
+3. Termination after SQLite commit but before the acknowledgment callback leaves
+   the complete event, delivery row, and transaction-end checkpoint. Replaying
+   the batch reports a replay, creates no duplicates, and then acknowledges.
+4. Termination after the acknowledgment callback leaves the same durable
+   checkpoint and complete batch; even a defensive replay remains harmless.
+5. Termination before `http.Client.Do` makes no destination call and leaves
+   attempts at zero.
+6. When the destination has received a request but withheld its response,
+   killing the process leaves the result ambiguous and attempts at zero.
+7. A `2xx` followed by termination before `MarkDelivered` also leaves attempts
+   at zero. Restart sends the same event and idempotency key again.
+8. In every delivery crash case, the later event for that sink remains pending
+   while recovery retries and completes the earlier event.
+
+These tests use child processes and `os.Exit` or an external process kill, then
+reopen the same SQLite file. They do not simulate a crash by returning an error
+through normal deferred cleanup.

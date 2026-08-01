@@ -2,9 +2,10 @@
 
 ## Scope
 
-Milestones 1 and 2 capture explicit application-defined events from one
+Milestones 1 through 3 capture explicit application-defined events from one
 PostgreSQL database and replication slot into one local SQLite spool, then
-deliver them to configured stdout or HTTP webhook sinks. They do not capture
+deliver them to configured stdout or HTTP webhook sinks, and prove the critical
+recovery boundaries under real child-process termination. They do not capture
 general table changes.
 
 ```text
@@ -45,6 +46,8 @@ single delivery worker
 - `internal/delivery` owns the sink interface, ordered worker, retry decisions,
   stable webhook identity, HTTP behavior, signatures, and stdout development
   sink.
+- `internal/failure` contains inert hook boundaries. Only tests inject
+  functions; production composition uses the zero value.
 - `internal/spool` defines capture metadata and the small persistence interface.
 - `internal/spool/sqlite` owns embedded migrations, SQLite durability, identity
   replay checks, checkpoints, sink registration, delivery state, inspection,
@@ -101,6 +104,33 @@ same delivery remains non-terminal and is attempted again after restart. The
 webhook idempotency key remains stable across attempts, but destinations are
 still responsible for deduplication. This is the unavoidable at-least-once
 crash window.
+
+## Deterministic process-crash testing
+
+Failure tests launch the ordinary spool, acknowledgment, webhook, and worker
+code inside child test processes. Injected hooks call `os.Exit` at deterministic
+boundaries, so deferred `Close` and rollback calls do not run. The parent opens
+the same SQLite file and verifies recovered state.
+
+```text
+before SQLite transaction ──────────────► no batch / no checkpoint
+after first insert, before commit ──────► no partial batch / no deliveries
+after SQLite commit, before ACK ────────► batch durable / replay harmless
+immediately after ACK ──────────────────► durable checkpoint equals ACK
+before webhook request ─────────────────► no call / delivery pending
+request received, response withheld ────► ambiguous call / delivery pending
+after 2xx, before local success ─────────► accepted call / delivery pending
+restart ambiguous delivery ─────────────► same idempotency key / possible duplicate
+```
+
+For the in-flight case, the parent destination confirms receipt and deliberately
+withholds its response before killing the child. This proves the ambiguity
+without relying on a returned network error. Recovery retries the oldest pending
+event while later events for that sink remain blocked.
+
+There is deliberately no runtime failpoint registry. Tests pass hook functions
+through alternate internal constructors; the public configuration and
+production CLI cannot select or activate them.
 
 SQLite sequence, not textual LSN order, defines spool order. Events are inserted
 in PostgreSQL commit order and their accepted-message order within a transaction.

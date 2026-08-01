@@ -10,13 +10,13 @@ configured stdout or HTTP webhook sinks with bounded retries.
 > WriteRelay provides atomic event creation with a PostgreSQL transaction, a
 > durable relay handoff, and at-least-once external delivery.
 
-Milestone 2 adds ordered at-least-once webhook delivery. WriteRelay does not
-claim exactly-once processing, global ordering, or atomicity with an external
-broker.
+Milestones 2 and 3 add ordered at-least-once webhook delivery and deterministic
+process-crash recovery proofs. WriteRelay does not claim exactly-once
+processing, global ordering, or atomicity with an external broker.
 
 ## Status
 
-This repository is a Milestone 2 architectural proof, not a production-ready
+This repository is a Milestone 3 architectural proof, not a production-ready
 delivery system. Its public project name is **WriteRelay**, its repository name
 is `write-relay`, and its Go module path is
 `github.com/johnathondillon/write-relay`.
@@ -56,6 +56,26 @@ replay; different content for the same identity stops capture.
 Webhook requests contain the original event bytes and a stable
 `Idempotency-Key`. A crash after the destination accepts a request but before
 SQLite records success can cause a duplicate request with the same key.
+
+## Crash-recovery proof
+
+`make failure` runs ordinary persistence and delivery code in child processes
+and terminates those processes without deferred cleanup at every critical
+boundary:
+
+- before and midway through a SQLite capture transaction;
+- after SQLite commit but before PostgreSQL acknowledgment;
+- immediately after acknowledgment;
+- before and during a webhook request;
+- after destination success but before local success is recorded.
+
+The parent tests reopen the same spool and prove atomic rollback, durable replay,
+checkpoint/acknowledgment agreement, per-sink ordering, and retry of ambiguous
+requests. The in-flight and post-success cases intentionally demonstrate that
+the same idempotency key may be sent more than once.
+
+Crash hooks are injected directly by tests. The production daemon has no
+configuration, environment variable, or endpoint that can activate them.
 
 ## Local quick start
 
@@ -183,6 +203,7 @@ make help
 make fmt
 make build
 make test
+make failure
 make vet
 make race
 make vuln
@@ -195,7 +216,7 @@ Integration tests use Docker Compose and prove committed capture, rollback
 absence, ordering within a transaction, durable checkpoint acknowledgment,
 webhook delivery/retry, and graceful shutdown. Focused tests cover replay,
 identity conflicts, sink backfill, per-sink order, retry/dead-letter state,
-redrive, redirects, signatures, timeouts, and crash-window duplicates.
+redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 
 ## Documentation
 
