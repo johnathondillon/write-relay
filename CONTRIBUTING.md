@@ -8,6 +8,7 @@ For local checks:
 
 ```bash
 make check
+make failure
 make vuln
 make integration
 ```
@@ -21,6 +22,10 @@ payload bytes, SQLite durability, delivery ordering, retry classification, or
 terminal state require an ADR update and focused failure tests. Do not introduce
 additional production sinks, table CDC, or protocol versions 2–4 as part of an
 unrelated change.
+
+Failure hooks must remain code-injected and inert by default. Do not add a
+production YAML field, environment switch, signal, endpoint, or CLI option that
+can activate a process crash.
 
 Before opening a contribution:
 
