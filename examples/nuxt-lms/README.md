@@ -246,6 +246,15 @@ npm run typecheck
 The Docker LMS build also type-checks both services. After edits, rebuild with
 `docker compose up --build`. Dependencies are locked in `package-lock.json`.
 
+The example uses TypeScript 5.9 with `vue-tsc` 3.3.11. Upgrading TypeScript alone
+to 7.0.2 fails during `nuxt typecheck`: `vue-tsc` loads `typescript/lib/tsc`,
+which TypeScript 7 no longer exports (`ERR_PACKAGE_PATH_NOT_EXPORTED`).
+[Dependabot configuration](../../.github/dependabot.yml) skips TypeScript major
+version updates so the compiler and Nuxt/Vue tooling can be upgraded together.
+Minor and patch updates remain enabled. Revisit that rule when upgrading the
+tooling, and verify both the Docker build and the behavior checks above before
+accepting a new compiler major version.
+
 ## Stop or start fresh
 
 ```bash
