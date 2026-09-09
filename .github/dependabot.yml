@@ -5,6 +5,12 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Upgrade TypeScript majors together with the Nuxt/Vue typechecking tooling.
+    # vue-tsc 3.3.11 loads typescript/lib/tsc, which TypeScript 7 no longer exports.
+    ignore:
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
     groups:
       nuxt-example:
         patterns:
