@@ -141,6 +141,12 @@ SQLite. The worker retries network failures, `408`, `425`, `429`, and `5xx`,
 honoring `Retry-After` only within the configured maximum delay. Other responses
 dead-letter immediately.
 
+Every `2xx`, including `202 Accepted`, is a successful sink result. Receivers
+must complete the work or durably accept responsibility for processing it before
+returning success. A receiver that queues work owns its subsequent retries and
+recovery. After recording `delivered`, WriteRelay does not monitor downstream
+processing or retry that delivery. See the [FAQ](faq.md) for application examples.
+
 ## Operational behavior
 
 Transient replication connection failures reconnect with bounded exponential

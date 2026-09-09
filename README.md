@@ -14,6 +14,27 @@ Milestone 2 adds ordered at-least-once webhook delivery. WriteRelay does not
 claim exactly-once processing, global ordering, or atomicity with an external
 broker.
 
+## What WriteRelay does for your application
+
+An application can save a business change and emit an event announcing it in
+the same PostgreSQL transaction. Both commit together, or both roll back.
+WriteRelay then durably captures the event and delivers it separately. If the
+destination is unavailable, retryable failures are retried automatically within
+configured limits; permanent failures and exhausted retries are retained for
+inspection and manual redrive. A delivery failure does not undo the original
+database change.
+
+For example, after a payment provider reports a successful payment, your LMS
+can record that payment and emit `payment.recorded` together. WriteRelay can
+then notify a course-access service using the user and course IDs you include
+in the event. The external payment is already complete; it is outside that
+PostgreSQL transaction.
+
+Current destinations are stdout and HTTP endpoints that accept WriteRelay's
+event format. Provider-specific API calls and direct queue integrations require
+additional integration code. See the [FAQ](docs/faq.md) for examples and the
+boundaries of these guarantees.
+
 ## Status
 
 This repository is a Milestone 2 architectural proof, not a production-ready
@@ -56,6 +77,63 @@ replay; different content for the same identity stops capture.
 Webhook requests contain the original event bytes and a stable
 `Idempotency-Key`. A crash after the destination accepts a request but before
 SQLite records success can cause a duplicate request with the same key.
+
+### When a receiver should return success
+
+WriteRelay treats any `2xx` response, including `202 Accepted`, as successful
+delivery. Return success only after the work is complete or the receiver has
+durably saved it for later processing. In the latter case, the receiver owns
+retries and recovery from that point onward. Once WriteRelay records delivery
+as successful, it does not retry it or monitor downstream processing.
+
+Starting background work in memory and immediately returning success can lose
+that work if the receiver crashes. For a course-access service, commit the
+access grant or durably enqueue the request before returning success.
+
+### Handling duplicate webhooks
+
+WriteRelay sends the **same `Idempotency-Key` on every attempt for a given
+delivery**. The receiving service is responsible for using that key to avoid
+processing the delivery more than once.
+
+For example, an LMS saves a course completion and emits a `course.completed`
+event in the same PostgreSQL transaction. WriteRelay later sends the event to a
+certificate service. If that service creates the certificate but its success
+response is lost, WriteRelay can send the event again with the same key.
+
+The certificate service should:
+
+1. Start a database transaction and insert the key into a table with a unique
+   constraint on the key.
+2. If the key is new, create the certificate in that same transaction, then
+   commit both the certificate and the key before returning a `2xx` response.
+3. If the key was already committed, return a `2xx` response without creating
+   another certificate.
+
+The unique constraint protects against concurrent duplicate requests. Saving
+the key and certificate together ensures a failure rolls both back, allowing a
+later attempt to try again. This transaction protects changes in the receiver's
+database; any additional external calls need their own duplicate handling.
+
+## Crash-recovery proof
+
+`make failure` runs ordinary persistence and delivery code in child processes
+and terminates those processes without deferred cleanup at every critical
+boundary:
+
+- before and midway through a SQLite capture transaction;
+- after SQLite commit but before PostgreSQL acknowledgment;
+- immediately after acknowledgment;
+- before and during a webhook request;
+- after destination success but before local success is recorded.
+
+The parent tests reopen the same spool and prove atomic rollback, durable replay,
+checkpoint/acknowledgment agreement, per-sink ordering, and retry of ambiguous
+requests. The in-flight and post-success cases intentionally demonstrate that
+the same idempotency key may be sent more than once.
+
+Crash hooks are injected directly by tests. The production daemon has no
+configuration, environment variable, or endpoint that can activate them.
 
 ## Local quick start
 
@@ -199,6 +277,7 @@ redrive, redirects, signatures, timeouts, and crash-window duplicates.
 
 ## Documentation
 
+- [FAQ: use cases, retries, and integration boundaries](docs/faq.md)
 - [Project specification](docs/specification.md)
 - [Architecture](docs/architecture.md)
 - [Correctness invariants](docs/correctness.md)
