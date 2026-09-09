@@ -137,7 +137,7 @@ configuration, environment variable, or endpoint that can activate them.
 
 ## Local quick start
 
-Prerequisites are Go 1.26.5 or newer, Docker Compose, and optionally `psql`.
+Prerequisites are Go 1.26.8 or newer, Docker Compose, and optionally `psql`.
 Use the latest available security patch for the selected Go release.
 
 ```bash
