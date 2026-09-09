@@ -137,6 +137,11 @@ configuration, environment variable, or endpoint that can activate them.
 
 ## Local quick start
 
+For a browser-based walkthrough with no local Go or Node setup, run the
+[Nuxt LMS learning lab](examples/nuxt-lms/README.md) with Docker Compose. It
+demonstrates committed events, rollback, automatic retry, duplicate handling,
+and manual dead-letter redrive using a separate certificate service.
+
 Prerequisites are Go 1.26.8 or newer, Docker Compose, and optionally `psql`.
 Use the latest available security patch for the selected Go release.
 
@@ -229,6 +234,11 @@ go run ./cmd/writerelayd spool deliveries \
 
 After correcting the destination or event handling, explicitly redrive one
 dead-letter record:
+
+If you are running the **Nuxt LMS learning lab**, use its
+[Docker redrive instructions](examples/nuxt-lms/README.md#inspect-a-dead-letter-and-retry-it-manually),
+which use the example's `certificates` sink and the Completion ID from the page.
+The command below is for this README's billing quick start.
 
 ```bash
 go run ./cmd/writerelayd spool redrive \

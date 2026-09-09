@@ -25,3 +25,8 @@ coverage.out
 .DS_Store
 .idea
 .vscode
+
+# Local JavaScript example build output
+**/node_modules
+**/.nuxt
+**/.output
