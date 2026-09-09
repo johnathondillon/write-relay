@@ -152,7 +152,7 @@ The underlying dual-write problem is database-independent, but the optimized imp
 ## Supported target for the first release
 
 - PostgreSQL 14 through 18.
-- Go 1.26.5 or newer for the daemon and tooling.
+- Go 1.26.8 or newer for the daemon and tooling.
 - Linux and macOS development environments.
 - Docker Compose for local integration testing.
 - One PostgreSQL database and one logical replication slot per daemon instance.
@@ -1191,7 +1191,7 @@ Create `docs/security-model.md` and cover at least:
 
 ## Go
 
-- Use Go 1.26.5 or newer language and module settings.
+- Use Go 1.26.8 or newer language and module settings.
 - Use `context.Context` for blocking I/O and lifecycle cancellation.
 - Use `log/slog` for structured logs.
 - Use `%w` for error wrapping.
