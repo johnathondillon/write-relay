@@ -63,9 +63,21 @@ bounded busy timeout and a single writer connection.
 
 Webhook requests have a bounded timeout, redirects are disabled, response bodies
 are read only to a small bound, retries have bounded delay and attempt count,
-and stored error text is capped. Milestone 2 still has no spool-size or
-retention limit. Operators must monitor disk and PostgreSQL retained WAL. A
-future limit must fail closed.
+and stored error text is capped. The current implementation still has no
+spool-size or retention limit. Operators must monitor disk and PostgreSQL
+retained WAL. A future limit must fail closed.
+
+## Failure-test isolation
+
+Crash boundaries are ordinary function hooks whose zero value is inert.
+Production composition does not expose them through YAML, environment variables,
+signals, HTTP endpoints, or CLI flags. Environment variables used by the
+subprocess harness are referenced only from `_test.go` files and therefore are
+not compiled into `writerelayd`.
+
+This prevents a diagnostic crash feature from becoming a production
+denial-of-service control surface. Adding any runtime-accessible failpoint would
+require a separate security review and is not part of Milestone 3.
 
 ## Supply chain
 

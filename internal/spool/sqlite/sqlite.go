@@ -17,6 +17,7 @@ import (
 
 	"github.com/jackc/pglogrepl"
 	"github.com/johnathondillon/write-relay/internal/delivery"
+	"github.com/johnathondillon/write-relay/internal/failure"
 	"github.com/johnathondillon/write-relay/internal/spool"
 	_ "modernc.org/sqlite"
 )
@@ -31,8 +32,9 @@ const (
 )
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db    *sql.DB
+	path  string
+	hooks failure.Hooks
 }
 
 type EventRow struct {
@@ -67,6 +69,12 @@ type DeliveryRow struct {
 }
 
 func Open(ctx context.Context, path string) (*Store, error) {
+	return OpenWithHooks(ctx, path, failure.Hooks{})
+}
+
+// OpenWithHooks exists for deterministic process-crash tests. Production
+// composition calls Open, which always uses inert hooks.
+func OpenWithHooks(ctx context.Context, path string, hooks failure.Hooks) (*Store, error) {
 	if path == "" {
 		return nil, errors.New("spool path is required")
 	}
@@ -86,7 +94,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	store := &Store{db: db, path: path}
+	store := &Store{db: db, path: path, hooks: hooks}
 	if err := store.initialize(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -181,6 +189,7 @@ func (s *Store) PersistCommittedBatch(ctx context.Context, batch spool.Committed
 	if batch.CommitEndLSN < batch.CommitLSN {
 		return result, fmt.Errorf("%w: commit end LSN %s precedes commit LSN %s", spool.ErrDurability, batch.CommitEndLSN, batch.CommitLSN)
 	}
+	s.hooks.CallBeforeSpoolTransaction()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return result, fmt.Errorf("%w: begin transaction: %v", spool.ErrDurability, err)
@@ -204,6 +213,7 @@ func (s *Store) PersistCommittedBatch(ctx context.Context, batch spool.Committed
 			err = deliveryErr
 			return result, err
 		}
+		s.hooks.CallAfterSpoolEvent(index)
 		if inserted {
 			result.Inserted++
 		} else {
@@ -232,6 +242,7 @@ func (s *Store) PersistCommittedBatch(ctx context.Context, batch spool.Committed
 		err = fmt.Errorf("%w: commit batch: %v", spool.ErrDurability, commitErr)
 		return result, err
 	}
+	s.hooks.CallAfterSpoolCommit()
 	return result, nil
 }
 

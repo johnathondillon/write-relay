@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
+	"github.com/johnathondillon/write-relay/internal/failure"
 )
 
 const maxStoredErrorBytes = 2048
@@ -58,6 +60,7 @@ type Worker struct {
 	maxDelay     time.Duration
 	maxAttempts  int
 	logger       *slog.Logger
+	hooks        failure.Hooks
 }
 
 func NewWorker(
@@ -69,10 +72,28 @@ func NewWorker(
 	maxAttempts int,
 	logger *slog.Logger,
 ) *Worker {
+	return NewWorkerWithHooks(
+		store, sinks, pollInterval, initialDelay, maxDelay, maxAttempts,
+		logger, failure.Hooks{},
+	)
+}
+
+// NewWorkerWithHooks exists for deterministic process-crash tests. Production
+// composition calls NewWorker with inert hooks.
+func NewWorkerWithHooks(
+	store Store,
+	sinks map[string]Sink,
+	pollInterval time.Duration,
+	initialDelay time.Duration,
+	maxDelay time.Duration,
+	maxAttempts int,
+	logger *slog.Logger,
+	hooks failure.Hooks,
+) *Worker {
 	return &Worker{
 		store: store, sinks: sinks, pollInterval: pollInterval,
 		initialDelay: initialDelay, maxDelay: maxDelay, maxAttempts: maxAttempts,
-		logger: logger,
+		logger: logger, hooks: hooks,
 	}
 }
 
@@ -122,6 +143,7 @@ func (w *Worker) ProcessOne(ctx context.Context) (bool, error) {
 	defer cancel()
 	now := time.Now().UTC()
 	if result.Success {
+		w.hooks.CallAfterSinkSuccess()
 		if err := w.store.MarkDelivered(recordCtx, item, attempt, result.StatusCode, now); err != nil {
 			return false, fmt.Errorf("record successful delivery: %w", err)
 		}

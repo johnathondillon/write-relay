@@ -9,7 +9,8 @@
 > the committed event into a durable SQLite spool before acknowledging its WAL
 > position. A rolled-back event never reaches the spool. Milestone 2 adds
 > durable per-sink state plus ordered stdout and HTTP webhook delivery with
-> retry, dead-letter, inspection, and redrive.
+> retry, dead-letter, inspection, and redrive. Milestone 3 proves the documented
+> crash windows with real child-process termination and spool reopening.
 
 ---
 
@@ -1056,7 +1057,7 @@ Do not mark the milestone complete merely because package skeletons exist.
 
 ---
 
-# 18. Delivery milestone and later roadmap
+# 18. Delivery, recovery, and later roadmap
 
 ## Milestone 2 — Delivery engine
 
@@ -1072,19 +1073,21 @@ Do not mark the milestone complete merely because package skeletons exist.
 
 ## Milestone 3 — Failure injection and recovery
 
-Add deterministic failpoints around:
+- [x] Terminate before the SQLite transaction.
+- [x] Terminate midway through batch insertion.
+- [x] Terminate after SQLite commit but before PostgreSQL acknowledgment.
+- [x] Terminate immediately after PostgreSQL acknowledgment.
+- [x] Terminate before a sink request.
+- [x] Kill the process while a sink request is in flight.
+- [x] Terminate after destination acceptance but before the local success mark.
+- [x] Reopen the same spool and prove rollback, replay, retry, order, and stable
+  idempotency behavior.
+- [x] Keep all hooks inert and inaccessible to production configuration.
 
-```text
-before SQLite transaction
-midway through batch insert
-after SQLite commit but before PostgreSQL ACK
-immediately after PostgreSQL ACK
-before sink request
-while sink request is in flight
-after destination accepts but before local success mark
-```
-
-Prove the documented at-least-once behavior under process termination and restart.
+The tests run ordinary component code in child test processes and terminate
+without deferred cleanup. A parent process reopens the SQLite file and asserts
+durable state. In-flight and accepted-but-unrecorded requests retry with the same
+idempotency key and may be duplicated, preserving the at-least-once contract.
 
 ## Milestone 4 — Producer SDKs and protocol conformance
 

@@ -10,9 +10,9 @@ configured stdout or HTTP webhook sinks with bounded retries.
 > WriteRelay provides atomic event creation with a PostgreSQL transaction, a
 > durable relay handoff, and at-least-once external delivery.
 
-Milestone 2 adds ordered at-least-once webhook delivery. WriteRelay does not
-claim exactly-once processing, global ordering, or atomicity with an external
-broker.
+Milestones 2 and 3 add ordered at-least-once webhook delivery and deterministic
+process-crash recovery proofs. WriteRelay does not claim exactly-once
+processing, global ordering, or atomicity with an external broker.
 
 ## What WriteRelay does for your application
 
@@ -37,7 +37,7 @@ boundaries of these guarantees.
 
 ## Status
 
-This repository is a Milestone 2 architectural proof, not a production-ready
+This repository is a Milestone 3 architectural proof, not a production-ready
 delivery system. Its public project name is **WriteRelay**, its repository name
 is `write-relay`, and its Go module path is
 `github.com/johnathondillon/write-relay`.
@@ -261,6 +261,7 @@ make help
 make fmt
 make build
 make test
+make failure
 make vet
 make race
 make vuln
@@ -273,7 +274,7 @@ Integration tests use Docker Compose and prove committed capture, rollback
 absence, ordering within a transaction, durable checkpoint acknowledgment,
 webhook delivery/retry, and graceful shutdown. Focused tests cover replay,
 identity conflicts, sink backfill, per-sink order, retry/dead-letter state,
-redrive, redirects, signatures, timeouts, and crash-window duplicates.
+redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 
 ## Documentation
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/failure"
 )
 
 type WebhookSender struct {
@@ -23,9 +24,20 @@ type WebhookSender struct {
 	signingSecret []byte
 	timeout       time.Duration
 	client        *http.Client
+	hooks         failure.Hooks
 }
 
 func NewWebhookSender(sink config.SinkConfig, timeout time.Duration) (*WebhookSender, SinkRegistration, error) {
+	return NewWebhookSenderWithHooks(sink, timeout, failure.Hooks{})
+}
+
+// NewWebhookSenderWithHooks exists for deterministic process-crash tests.
+// Production composition calls NewWebhookSender with inert hooks.
+func NewWebhookSenderWithHooks(
+	sink config.SinkConfig,
+	timeout time.Duration,
+	hooks failure.Hooks,
+) (*WebhookSender, SinkRegistration, error) {
 	authorization, err := optionalSecret(sink.AuthorizationEnv)
 	if err != nil {
 		return nil, SinkRegistration{}, err
@@ -46,6 +58,7 @@ func NewWebhookSender(sink config.SinkConfig, timeout time.Duration) (*WebhookSe
 		authorization: authorization,
 		signingSecret: []byte(signingSecret),
 		timeout:       timeout,
+		hooks:         hooks,
 		client: &http.Client{
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
@@ -95,6 +108,7 @@ func (s *WebhookSender) Send(ctx context.Context, item Delivery) AttemptResult {
 		request.Header.Set("X-WriteRelay-Signature", "v1="+hex.EncodeToString(mac.Sum(nil)))
 	}
 
+	s.hooks.CallBeforeSinkRequest()
 	response, err := s.client.Do(request)
 	if err != nil {
 		if requestCtx.Err() != nil {

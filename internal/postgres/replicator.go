@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/failure"
 	"github.com/johnathondillon/write-relay/internal/spool"
 )
 
@@ -20,10 +21,22 @@ type Replicator struct {
 	cfg    config.Config
 	spool  spool.Spool
 	logger *slog.Logger
+	hooks  failure.Hooks
 }
 
 func NewReplicator(cfg config.Config, durableSpool spool.Spool, logger *slog.Logger) *Replicator {
-	return &Replicator{cfg: cfg, spool: durableSpool, logger: logger}
+	return NewReplicatorWithHooks(cfg, durableSpool, logger, failure.Hooks{})
+}
+
+// NewReplicatorWithHooks exists for deterministic process-crash tests.
+// Production composition calls NewReplicator with inert hooks.
+func NewReplicatorWithHooks(
+	cfg config.Config,
+	durableSpool spool.Spool,
+	logger *slog.Logger,
+	hooks failure.Hooks,
+) *Replicator {
+	return &Replicator{cfg: cfg, spool: durableSpool, logger: logger, hooks: hooks}
 }
 
 func (r *Replicator) Run(ctx context.Context) error {
@@ -152,9 +165,9 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 			if batch == nil {
 				continue
 			}
-			result, err := persistThenAcknowledge(ctx, r.spool, *batch, func(ackLSN pglogrepl.LSN) error {
+			result, err := persistThenAcknowledgeWithHooks(ctx, r.spool, *batch, func(ackLSN pglogrepl.LSN) error {
 				return sendStandbyStatus(ctx, connection, ackLSN)
-			})
+			}, r.hooks)
 			if err != nil {
 				return err
 			}
@@ -251,6 +264,18 @@ func persistThenAcknowledge(
 	batch spool.CommittedBatch,
 	acknowledge func(pglogrepl.LSN) error,
 ) (spool.PersistResult, error) {
+	return persistThenAcknowledgeWithHooks(
+		ctx, durableSpool, batch, acknowledge, failure.Hooks{},
+	)
+}
+
+func persistThenAcknowledgeWithHooks(
+	ctx context.Context,
+	durableSpool spool.Spool,
+	batch spool.CommittedBatch,
+	acknowledge func(pglogrepl.LSN) error,
+	hooks failure.Hooks,
+) (spool.PersistResult, error) {
 	result, err := durableSpool.PersistCommittedBatch(ctx, batch)
 	if err != nil {
 		return result, err
@@ -264,6 +289,7 @@ func persistThenAcknowledge(
 		// plus payload digest makes persistence idempotent.
 		return result, err
 	}
+	hooks.CallAfterAcknowledgment()
 	return result, nil
 }
 

@@ -4,10 +4,9 @@ Last synchronized: 2026-07-27.
 
 ## Current execution target
 
-Prove that every captured event receives a durable per-sink delivery record,
-that one ordered worker can deliver the event to an HTTP webhook, and that
-retry, dead-letter, replay, and shutdown behavior preserve an honest
-at-least-once contract.
+Terminate real child processes at each capture and delivery durability boundary,
+reopen the same spool, and prove that rollback, replay, acknowledgment, retry,
+and duplicate behavior match the documented at-least-once contract.
 
 ## Milestone 0 — repository scaffold
 
@@ -58,6 +57,27 @@ at-least-once contract.
 - [x] Runtime, doctor, examples, architecture, correctness, security, and public
   documentation synchronized with delivery behavior.
 
+## Milestone 3 — deterministic failure injection
+
+- [x] Inert, code-injected test hooks with no environment-triggered production
+  failpoint controls.
+- [x] Child-process termination before a SQLite batch transaction and midway
+  through event insertion proves no partial batch or checkpoint survives.
+- [x] Termination after SQLite commit but before PostgreSQL acknowledgment proves
+  durable replay without duplicate event or delivery rows.
+- [x] Termination immediately after acknowledgment proves the local checkpoint
+  and acknowledged boundary agree.
+- [x] Termination before a sink request proves no destination call and a pending
+  delivery on restart.
+- [x] Termination while a request is in flight proves retry after an ambiguous
+  destination outcome.
+- [x] Termination after destination acceptance but before local success proves a
+  duplicate request with the same idempotency key.
+- [x] Recovery tests verify ordering, attempts, terminal state, and spool
+  integrity after reopening.
+- [x] Runtime, architecture, correctness, security, specification, and public
+  documentation synchronized with the tested crash model.
+
 ## Verification record
 
 This section records only commands actually executed in this workspace.
@@ -103,18 +123,27 @@ This section records only commands actually executed in this workspace.
   commands were executed successfully with the documented development roles.
 - [x] The multi-stage Docker image built and its non-root runtime executed the
   default version command after Milestone 2.
+- [x] `make failure` passed deterministic child-process termination before and
+  during SQLite commit, around PostgreSQL acknowledgment, before and during a
+  webhook request, and after destination success.
+- [x] Crash recovery reopened the same SQLite files and proved atomic rollback,
+  durable replay, checkpoint/ACK agreement, stable idempotency keys, retained
+  pending attempts, and per-sink ordering.
+- [x] `make check`, `make race`, and `make vuln` passed after Milestone 3; the
+  vulnerability scanner reported no reachable vulnerabilities.
+- [x] The PostgreSQL 18 integration suite passed after hook injection, proving
+  the zero-value production path did not alter capture or delivery behavior.
+- [x] The Milestone 3 multi-stage Docker image built and its non-root runtime
+  executed the default version command.
 
 ## Deliberately deferred
 
 - PostgreSQL 14–17 CI matrix and managed-service compatibility research.
-- Deterministic process-crash failpoints beyond focused replay tests.
 - Event deletion/retention, UI, non-webhook sinks, other databases, protocol
   versions 2–4, two-phase commit, and transaction streaming.
 - SBOM generation, metrics, and spool size policy.
 
 ## Next milestone
 
-Milestone 3 is deterministic process-level failure injection around capture,
-request, destination acceptance, and local success recording. Explicit
-retention and spool-size policy remain later work after those recovery paths are
-proven.
+Milestone 4 is producer SDKs and protocol conformance after the crash/recovery
+matrix is green. Explicit retention and spool-size policy remain later work.

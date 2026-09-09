@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check verify test race vet vuln lint build check postgres-up postgres-down setup integration
+.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -14,6 +14,9 @@ verify: ## Verify downloaded modules against go.sum
 
 test: ## Run unit tests
 	go test ./...
+
+failure: ## Run deterministic process-crash recovery tests
+	go test -count=1 -v -run 'Crash|Process' ./internal/spool/sqlite ./internal/postgres ./tests/failure
 
 race: ## Run unit tests with the race detector
 	go test -race ./...
