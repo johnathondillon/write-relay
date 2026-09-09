@@ -13,9 +13,11 @@ import (
 
 func spoolCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: writerelayd spool <list|deliveries|redrive> [options]")
+		return fmt.Errorf("usage: writerelayd spool <stats|list|deliveries|redrive> [options]")
 	}
 	switch args[0] {
+	case "stats":
+		return spoolStatsCommand(ctx, args[1:], stdout, stderr)
 	case "list":
 		return spoolListCommand(ctx, args[1:], stdout, stderr)
 	case "deliveries":

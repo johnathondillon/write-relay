@@ -179,6 +179,33 @@ processing or retry that delivery. See the [FAQ](faq.md) for application example
 
 ## Operational behavior
 
+`spool stats` opens an existing SQLite spool using `mode=ro` and reads the
+checkpoint, event count, and per-sink delivery aggregates in one read transaction.
+It does not initialize or migrate a spool, configure sinks, or contact PostgreSQL
+or destinations. The current schema is required; a missing or unsupported spool
+returns an error instead of an empty report. Registered inactive sinks and sinks
+with no deliveries remain visible. Totals count deliveries across all sinks;
+event count is distinct from that total.
+
+Oldest waiting is the earliest original `captured_at` among events with
+`pending` or `retry_wait` deliveries. Age is computed at snapshot time in whole
+seconds, clamped at zero for future wall-clock timestamps. Backfill and redrive
+do not reset capture age; terminal states do not contribute to waiting age.
+
+File sizes are sampled separately after the database read transaction and include
+the main database, SQLite `-wal`, and `-shm` file lengths. A missing sidecar counts
+as zero. Concurrent writes/checkpoints can change these lengths while sampling;
+they are not allocated filesystem blocks or PostgreSQL retained-WAL measurements.
+SQLite may maintain a shared-memory sidecar for a read-only WAL reader, so the
+command is not an immutable/offline-file reader. See [SQLite's WAL
+documentation](https://www.sqlite.org/wal.html#read_only_databases).
+
+The command emits either a readable summary or one JSON object with `--json`.
+Neither format contains event payloads, destination URLs, or resolved secrets.
+A snapshot reports persisted state and does not establish daemon liveness or
+destination health. Aggregation scans delivery records and is intended for
+operator inspection rather than high-frequency polling of a large spool.
+
 Transient replication connection failures reconnect with bounded exponential
 backoff and jitter. Protocol, identity, slot, and spool-durability failures are
 fatal so the daemon cannot silently skip an event. Destination failures are

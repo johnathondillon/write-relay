@@ -86,6 +86,52 @@ Restarting a receiver resets its in-memory demo mode to Normal but retains its
 database records. A pending event may consume a one-shot control before a newly
 created event, so finish one experiment before starting another.
 
+## Watch the relay's delivery counts
+
+Keep the example running. In another terminal, from the repository root:
+
+```bash
+cd examples/nuxt-lms
+docker compose exec relay writerelayd spool stats \
+  --config /etc/writerelay/example.yaml
+```
+
+If you are already in `examples/nuxt-lms`, skip `cd`. This uses the binary inside
+the relay container, so you do not need Go installed. If you started an older
+version of the example, first rebuild with `docker compose up --build -d`.
+
+The summary shows all stored events and delivery states, the `certificates`
+sink's counts, its oldest waiting event's age, and the SQLite spool file sizes.
+Unlike the page's bounded receiver history, these counts come from the relay's
+complete persisted delivery state.
+
+Try **Simulate outage**, complete a course, then rerun the command. The
+`retry_wait` count should increase once a request fails. Restore **Normal** and
+rerun after recovery: that delivery moves to `delivered`. A `dead_letter` stays
+separate from the waiting count until you explicitly redrive it. Waiting age is
+time since original local capture, not time since the last attempt.
+
+For machine-readable output, add `--json`:
+
+```bash
+docker compose exec -T relay writerelayd spool stats \
+  --config /etc/writerelay/example.yaml --json
+```
+
+The JSON response is one object with `sampled_at`, `event_count`,
+`last_durable_lsn`, `deliveries`, `oldest_waiting`, `storage`, and `sinks`.
+Each sink has its own `deliveries` and `oldest_waiting`; the latter is `null`
+when nothing is pending or waiting to retry. File sizes are byte counts and
+waiting ages are whole seconds.
+
+This is a snapshot of saved state, not a daemon health check. To inspect the
+same spool with the relay stopped, use a temporary CLI container:
+
+```bash
+docker compose run --rm --no-deps relay spool stats \
+  --config /etc/writerelay/example.yaml
+```
+
 ## Try a lost success response
 
 1. With no older work pending, click **Lose next response**.
