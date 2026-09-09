@@ -2,9 +2,9 @@ name: nuxt-lms-example
 
 on:
   push:
-    paths: ['examples/nuxt-lms/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+    paths: ['examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
   pull_request:
-    paths: ['examples/nuxt-lms/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+    paths: ['examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
 
 permissions:
   contents: read

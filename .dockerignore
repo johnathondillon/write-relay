@@ -30,3 +30,5 @@ coverage.out
 **/node_modules
 **/.nuxt
 **/.output
+sdk/typescript/dist
+sdk/typescript/*.tgz
