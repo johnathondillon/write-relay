@@ -1,0 +1,28 @@
+name: nuxt-lms-example
+
+on:
+  push:
+    paths: ['examples/nuxt-lms/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+  pull_request:
+    paths: ['examples/nuxt-lms/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  example:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: examples/nuxt-lms
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker compose up --build --wait --wait-timeout 120
+      - run: docker compose run --rm --no-deps verify
+      - if: failure()
+        run: docker compose logs --no-color
+      - if: always()
+        run: docker compose down --volumes

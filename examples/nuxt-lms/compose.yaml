@@ -1,0 +1,106 @@
+name: writerelay-nuxt-lms
+
+services:
+  postgres:
+    image: postgres:18
+    command:
+      [
+        "postgres",
+        "-c",
+        "wal_level=logical",
+        "-c",
+        "max_replication_slots=10",
+        "-c",
+        "max_wal_senders=10",
+      ]
+    environment:
+      POSTGRES_DB: writerelay
+      POSTGRES_PASSWORD: example-admin-password
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ../../sql/postgres/001_install.sql:/docker-entrypoint-initdb.d/001_install.sql:ro
+      - ./sql/002_example.sql:/docker-entrypoint-initdb.d/002_example.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d writerelay"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  relay-setup:
+    build: ../..
+    image: writerelay-lms-relay:local
+    command:
+      ["setup", "--config", "/etc/writerelay/example.yaml", "--create-slot"]
+    environment: &relay-environment
+      WRITERELAY_POSTGRES_DSN: postgres://writerelay_repl:example-repl-password@postgres:5432/writerelay?sslmode=disable
+      WRITERELAY_WEBHOOK_AUTHORIZATION: Bearer local-example-token
+    volumes: &relay-volumes
+      - ./relay.yaml:/etc/writerelay/example.yaml:ro
+      - relay-data:/var/lib/writerelay
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  relay:
+    build: ../..
+    image: writerelay-lms-relay:local
+    command: ["run", "--config", "/etc/writerelay/example.yaml"]
+    environment: *relay-environment
+    volumes: *relay-volumes
+    depends_on:
+      relay-setup: { condition: service_completed_successfully }
+      certificate: { condition: service_healthy }
+
+  certificate:
+    build: { context: ., target: certificate }
+    environment:
+      CERTIFICATE_DATABASE_URL: postgres://certificate_app:example-certificate-password@postgres:5432/certificates
+      EXAMPLE_TOKEN: local-example-token
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3001/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  lms:
+    build: { context: ., target: lms }
+    ports: ["127.0.0.1:${LMS_PORT:-3000}:3000"]
+    environment:
+      LMS_DATABASE_URL: postgres://lms_app:example-lms-password@postgres:5432/writerelay
+      CERTIFICATE_URL: http://certificate:3001
+      EXAMPLE_TOKEN: local-example-token
+    depends_on:
+      relay: { condition: service_started }
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  verify:
+    image: node:24-bookworm-slim
+    profiles: ["tools"]
+    working_dir: /example
+    volumes: ["./scripts:/example/scripts:ro"]
+    environment:
+      LMS_URL: http://lms:3000
+    command: ["node", "scripts/verify.mjs"]
+    depends_on:
+      lms: { condition: service_healthy }
+
+volumes:
+  postgres-data:
+  relay-data:

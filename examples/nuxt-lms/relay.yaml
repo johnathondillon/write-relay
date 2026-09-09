@@ -1,0 +1,25 @@
+version: 1
+postgres:
+  dsn_env: WRITERELAY_POSTGRES_DSN
+  slot: lms_example_slot
+  publication: lms_example_publication
+  message_prefix: writerelay.v1
+  status_interval: 1s
+spool:
+  path: /var/lib/writerelay/spool.sqlite
+delivery:
+  poll_interval: 1s
+  request_timeout: 3s
+  retry:
+    initial_delay: 2s
+    max_delay: 5s
+    max_attempts: 10
+  sinks:
+    - name: certificates
+      type: webhook
+      url: http://certificate:3001/events
+      allow_insecure_http: true
+      authorization_env: WRITERELAY_WEBHOOK_AUTHORIZATION
+logging:
+  level: info
+  format: text
