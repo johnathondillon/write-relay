@@ -223,7 +223,28 @@ value. When `signing_secret_env` is set, WriteRelay adds
 `X-WriteRelay-Signature: v1=<hex>` over `<timestamp>.<raw-body>`. Redirects are
 not followed.
 
-Inspect delivery state:
+Get a summary of the local spool:
+
+```bash
+go run ./cmd/writerelayd spool stats --config ./writerelay.yaml
+go run ./cmd/writerelayd spool stats --config ./writerelay.yaml --json
+```
+
+`stats` reports the captured event count, durable checkpoint, delivery counts
+by state and sink, oldest waiting age, and database/WAL/SHM file sizes. It reads
+an existing spool without creating or migrating it and requires no PostgreSQL
+connection or resolved sink secrets. For the Nuxt example, use the
+[Docker stats commands](examples/nuxt-lms/README.md#watch-the-relays-delivery-counts).
+
+Waiting means `pending` or `retry_wait`; age starts at the event's original local
+capture time, including after sink backfill or manual redrive. Dead letters are
+reported separately. Counts include inactive sinks with retained history, and
+an event sent to multiple sinks contributes multiple delivery records. File
+sizes are approximate file lengths, including SQLite's WAL, not PostgreSQL's
+retained WAL or filesystem allocated space. A successful snapshot does not
+establish that the daemon is running or a destination is healthy.
+
+Inspect individual delivery records:
 
 ```bash
 go run ./cmd/writerelayd spool deliveries \

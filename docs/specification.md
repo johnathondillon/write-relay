@@ -652,11 +652,23 @@ Commands:
 writerelayd run --config ./writerelay.yaml
 writerelayd doctor --config ./writerelay.yaml
 writerelayd setup --config ./writerelay.yaml --create-slot
+writerelayd spool stats --config ./writerelay.yaml
+writerelayd spool stats --config ./writerelay.yaml --json
 writerelayd spool list --config ./writerelay.yaml --limit 20
 writerelayd spool deliveries --config ./writerelay.yaml --state dead_letter
 writerelayd spool redrive --config ./writerelay.yaml --sink NAME --source SOURCE --id ID
 writerelayd version
 ```
+
+`spool stats` summarizes the existing spool in a consistent database snapshot:
+event count, durable checkpoint, all four delivery-state counts globally and per
+registered sink, and oldest waiting capture time/age. Waiting includes `pending`
+and `retry_wait`; age starts at original local capture and does not reset on
+redrive. Empty waiting groups use JSON `null`; an empty sink list is `[]`.
+Inactive sink history is included. Separate approximate file-length samples
+report database, SQLite WAL, SHM, and total bytes. The command does not connect
+to PostgreSQL, resolve destination secrets, create a spool, or apply migrations.
+It requires the current spool schema and makes no live-health claim.
 
 ## 11.1 Example configuration
 

@@ -87,6 +87,14 @@ bounded local webhook, proves a committed event reaches the destination, proves
 the rolled-back event does not, and observes a transient `503` retry reaching
 durable `delivered` state.
 
+Spool statistics tests cover multi-sink totals, terminal-state exclusion from
+waiting age, inactive and empty sinks, capture-only mode, backfill, and redrive
+retaining the original capture age. A reader alongside an open WAL writer sees
+committed data and excludes uncommitted state. Inspection tests reject missing,
+unsupported, corrupt, and symlink spools; verify unchanged database contents and
+permissions; and cover file-size accounting, cancellation, JSON output, and
+output errors without resolving database or destination secrets.
+
 ## Answers required by Milestone 3
 
 1. Termination before `BeginTx` leaves the initialized spool and sink
