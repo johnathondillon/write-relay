@@ -1105,7 +1105,10 @@ idempotency key and may be duplicated, preserving the at-least-once contract.
 
 - Go producer SDK.
 - C# producer SDK.
-- TypeScript/Node producer SDK.
+- TypeScript/Node producer SDK: initial unpublished implementation in
+  `sdk/typescript`, exercised by the Nuxt example. It emits through an existing
+  transaction client and leaves transaction ownership and retry identity with
+  the application. Full CloudEvents conformance remains pending.
 - SQL-only integration remains first-class.
 - CloudEvents conformance tests.
 - Event ID helper with caller-controlled retry identity.

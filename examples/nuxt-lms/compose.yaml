@@ -51,7 +51,7 @@ services:
       certificate: { condition: service_healthy }
 
   certificate:
-    build: { context: ., target: certificate }
+    build: { context: ../.., dockerfile: examples/nuxt-lms/Dockerfile, target: certificate }
     environment:
       CERTIFICATE_DATABASE_URL: postgres://certificate_app:example-certificate-password@postgres:5432/certificates
       EXAMPLE_TOKEN: local-example-token
@@ -70,7 +70,7 @@ services:
       retries: 30
 
   lms:
-    build: { context: ., target: lms }
+    build: { context: ../.., dockerfile: examples/nuxt-lms/Dockerfile, target: lms }
     ports: ["127.0.0.1:${LMS_PORT:-3000}:3000"]
     environment:
       LMS_DATABASE_URL: postgres://lms_app:example-lms-password@postgres:5432/writerelay

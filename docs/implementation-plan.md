@@ -143,7 +143,15 @@ This section records only commands actually executed in this workspace.
   versions 2–4, two-phase commit, and transaction streaming.
 - SBOM generation, metrics, and spool size policy.
 
-## Next milestone
+## Milestone 4 progress
 
-Milestone 4 is producer SDKs and protocol conformance after the crash/recovery
-matrix is green. Explicit retention and spool-size policy remain later work.
+- [x] Initial TypeScript/Node producer SDK with envelope validation,
+  caller-controlled event identity, and emission on an existing transaction client.
+- [x] Nuxt example uses the local SDK; CI exercises commit, rollback, producer
+  retries, receiver outages, and duplicate delivery through it.
+- [x] SDK unit tests, declaration checks, and standalone tarball installation.
+- [ ] Go and C# SDKs, full CloudEvents conformance coverage, and separate
+  consumer inbox helpers.
+
+The TypeScript package remains unpublished. Explicit retention and spool-size
+policy remain later work.

@@ -12,6 +12,7 @@
     "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
+    "@writerelay/node": "file:../../sdk/typescript",
     "nuxt": "4.5.2",
     "pg": "8.23.0"
   },

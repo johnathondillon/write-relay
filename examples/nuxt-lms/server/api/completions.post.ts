@@ -1,4 +1,5 @@
 import { courses } from "#shared/courses";
+import { emit } from "@writerelay/node";
 
 export default defineEventHandler(async (request) => {
   const body = await readBody(request);
@@ -49,13 +50,12 @@ export default defineEventHandler(async (request) => {
     }
 
     const completion = inserted.rows[0];
-    const event = {
-      specversion: "1.0",
+    // Use the SAME client as the INSERT; the application owns the transaction.
+    await emit(client, {
       id: completion.id,
       source: "urn:writerelay:example:lms",
       type: "course.completed",
       subject: completion.id,
-      datacontenttype: "application/json",
       time: completion.completed_at.toISOString(),
       data: {
         completionId: completion.id,
@@ -63,11 +63,7 @@ export default defineEventHandler(async (request) => {
         courseId: course.id,
         courseTitle: course.title,
       },
-    };
-    // This is the entire producer integration. No HTTP call or SDK is needed.
-    await client.query("SELECT writerelay.emit($1::jsonb)", [
-      JSON.stringify(event),
-    ]);
+    });
     // Example-only rollback demonstration, after BOTH statements have executed.
     await client.query(body.rollback ? "ROLLBACK" : "COMMIT");
     return { completion, rolledBack: body.rollback === true, replay: false };

@@ -46,6 +46,12 @@ The current implementation targets PostgreSQL 14–18 and is locally exercised
 with PostgreSQL 18. Compatibility across every declared major version still
 needs CI coverage.
 
+Milestone 4 has started with an unpublished
+[TypeScript/Node producer SDK](sdk/typescript/README.md), used by the
+[Nuxt LMS example](examples/nuxt-lms/README.md). It validates and emits events
+through the application's existing PostgreSQL transaction client. SQL-only
+integration remains supported.
+
 ## How capture works
 
 1. `writerelay.emit(jsonb)` validates the envelope and calls

@@ -207,7 +207,9 @@ docker compose logs -f relay certificate
 ## Read the integration code
 
 - [Producer transaction](server/api/completions.post.ts): save the completion,
-  call `SELECT writerelay.emit($1::jsonb)`, and commit. A client-supplied UUID
+  call the [TypeScript SDK](../../sdk/typescript/README.md)'s `emit(client, event)`
+  on the same client, and commit. The SDK executes
+  `SELECT writerelay.emit($1::jsonb)`. A client-supplied UUID
   makes retries of an ambiguous producer HTTP request safe as well.
 - [Receiver transaction](certificate/server.ts): authenticate, validate, insert
   the inbox key and certificate together, and only then return success.
@@ -236,15 +238,24 @@ docker compose run --rm --no-deps verify
 This adds labeled test completions and checks concurrent producer requests,
 rollback absence after a later delivered event, automatic outage recovery,
 and duplicate handling after a lost response. Avoid using the UI's failure
-controls while verification is running. For Node development (Node 22.18+):
+controls while verification is running. For Node development (Node 22.18+),
+build the local SDK first. Starting in `examples/nuxt-lms`:
 
 ```bash
+cd ../../sdk/typescript
+npm ci
+npm test
+cd ../../examples/nuxt-lms
 npm ci
 npm run typecheck
 ```
 
 The Docker LMS build also type-checks both services. After edits, rebuild with
 `docker compose up --build`. Dependencies are locked in `package-lock.json`.
+The SDK is a local `file:../../sdk/typescript` dependency, so keep the example
+inside the repository. Docker uses the repository root as its build context
+and builds the SDK automatically. After SDK edits during Node development,
+run `npm run build` in `sdk/typescript` again.
 
 The example uses TypeScript 5.9 with `vue-tsc` 3.3.11. Upgrading TypeScript alone
 to 7.0.2 fails during `nuxt typecheck`: `vue-tsc` loads `typescript/lib/tsc`,

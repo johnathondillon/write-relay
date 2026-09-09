@@ -73,6 +73,7 @@ try {
     state.receiver.receipts.some((row) => row.completion_id === rollback.id),
     false,
   );
+  assert.equal(hasCertificate(state, rollback.id), false);
   console.log(
     "PASS: rolled-back completion and event absent after later committed event is delivered",
   );
