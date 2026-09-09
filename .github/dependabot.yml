@@ -21,6 +21,11 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # Review compiler major upgrades explicitly, as with the Nuxt example.
+    ignore:
+      - dependency-name: typescript
+        update-types:
+          - version-update:semver-major
 
   - package-ecosystem: gomod
     directory: /
