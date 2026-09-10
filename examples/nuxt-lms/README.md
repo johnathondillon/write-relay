@@ -24,7 +24,11 @@ also avoids reaching an unrelated app listening on IPv6 `localhost`.
 
 Compose initializes both databases, installs the SQL function, creates the
 replication slot, and starts the services. No separate setup commands are needed.
-Only the LMS port is published, bound to `127.0.0.1`.
+The PostgreSQL health check waits for TCP readiness, so relay setup starts only
+after the image has finished running its initialization scripts.
+The LMS port (3000) and relay monitoring port (9090) are published, both bound
+to `127.0.0.1`. If 9090 is busy, set `RELAY_MONITORING_PORT=9095` when starting
+Compose and use that port in the monitoring commands below.
 
 ## What runs locally
 
@@ -235,6 +239,54 @@ keeps identities and delivery history; it does not automatically shrink the
 SQLite file. New sinks cannot backfill pruned payloads. See the
 [retention guide](../../docs/retention.md) before choosing a cutoff for real data.
 
+## Watch live health and metrics
+
+After updating this checkout, run `docker compose up --build -d` from this
+example directory to rebuild the relay and expose its monitoring port. Existing
+example records are preserved.
+
+```bash
+curl -i http://127.0.0.1:9090/healthz
+curl -i http://127.0.0.1:9090/readyz
+curl http://127.0.0.1:9090/metrics
+```
+
+Both health endpoints should return 200 once capture starts and the first spool
+sample completes. No Prometheus deployment is needed to read these metrics.
+
+1. In the LMS, click **Simulate outage**, then complete a course.
+2. Fetch `/metrics` again after a couple of seconds. Look for
+   `writerelay_deliveries{sink="certificates",state="retry_wait"} 1` and an
+   increasing `writerelay_oldest_waiting_age_seconds{sink="certificates"}`.
+   Counts can be higher if you already have waiting completions.
+3. `/readyz` should still return 200: PostgreSQL capture can continue while the
+   certificate service is failing.
+4. Click **Normal** before the ten retry attempts are exhausted.
+   After the certificate is issued and the next sample completes, `retry_wait`
+   returns to zero and `delivered` increases.
+5. To observe a dead letter, use **Reject events**, complete another course,
+   and fetch `/metrics` again. The `dead_letter` count increases. Follow the
+   [redrive instructions above](#inspect-a-dead-letter-and-retry-it-manually)
+   to recover it. A receiver mode change alone does not redrive dead letters.
+
+The example samples every second. Retained/pruned payload counts and
+`writerelay_spool_file_bytes` are also available. See the
+[monitoring guide](../../docs/monitoring.md) for every metric and its limits.
+
+To observe a database disconnect in this disposable lab:
+
+```bash
+docker compose stop postgres
+curl -i http://127.0.0.1:9090/readyz
+curl -i http://127.0.0.1:9090/healthz
+docker compose start postgres
+```
+
+Once the relay observes the disconnect, readiness returns 503 while liveness
+remains 200. After PostgreSQL starts, allow time for reconnect backoff; readiness
+returns to 200. The LMS and certificate service also use this PostgreSQL
+container, so their database operations are unavailable while it is stopped.
+
 ## Read the integration code
 
 - [Producer transaction](server/api/completions.post.ts): save the completion,
@@ -268,7 +320,8 @@ docker compose run --rm --no-deps verify
 
 This adds labeled test completions and checks concurrent producer requests,
 rollback absence after a later delivered event, automatic outage recovery,
-and duplicate handling after a lost response. Avoid using the UI's failure
+retry metrics while capture stays ready, and duplicate handling after a lost
+response. Avoid using the UI's failure
 controls while verification is running. For Node development (Node 22.18+),
 build the local SDK first. Starting in `examples/nuxt-lms`:
 

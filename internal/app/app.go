@@ -8,6 +8,7 @@ import (
 
 	"github.com/johnathondillon/write-relay/internal/config"
 	"github.com/johnathondillon/write-relay/internal/delivery"
+	"github.com/johnathondillon/write-relay/internal/monitoring"
 	"github.com/johnathondillon/write-relay/internal/postgres"
 	sqlitespool "github.com/johnathondillon/write-relay/internal/spool/sqlite"
 )
@@ -45,30 +46,40 @@ func Run(ctx context.Context, cfg config.Config, logger *slog.Logger, stdout io.
 	}
 
 	replicator := postgres.NewReplicator(cfg, store, logger)
-	if len(sinks) == 0 {
-		return replicator.Run(ctx)
+	tasks := []func(context.Context) error{replicator.Run}
+	if len(sinks) > 0 {
+		worker := delivery.NewWorker(
+			store, sinks, cfg.Delivery.PollInterval,
+			cfg.Delivery.Retry.InitialDelay, cfg.Delivery.Retry.MaxDelay,
+			cfg.Delivery.Retry.MaxAttempts, logger,
+		)
+		tasks = append(tasks, worker.Run)
 	}
-	worker := delivery.NewWorker(
-		store, sinks, cfg.Delivery.PollInterval,
-		cfg.Delivery.Retry.InitialDelay, cfg.Delivery.Retry.MaxDelay,
-		cfg.Delivery.Retry.MaxAttempts, logger,
-	)
+	if cfg.Monitoring.Listen != "" {
+		monitor := monitoring.New(cfg.Spool.Path, cfg.Monitoring.SampleInterval, replicator.Status)
+		tasks = append(tasks, func(ctx context.Context) error {
+			return monitor.Run(ctx, cfg.Monitoring.Listen, logger)
+		})
+	}
+	return runTogether(ctx, tasks...)
+}
 
+// Wait for every component before closing their shared spool. The first exit
+// cancels its peers; preserve errors even if graceful shutdown arrives first.
+func runTogether(ctx context.Context, tasks ...func(context.Context) error) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make(chan error, 2)
-	go func() {
-		results <- replicator.Run(runCtx)
-	}()
-	go func() {
-		results <- worker.Run(runCtx)
-	}()
-
-	first := <-results
-	cancel()
-	second := <-results
-	if first != nil {
-		return first
+	results := make(chan error, len(tasks))
+	for _, task := range tasks {
+		go func() { results <- task(runCtx) }()
 	}
-	return second
+	var firstError error
+	for range tasks {
+		err := <-results
+		cancel()
+		if firstError == nil && err != nil {
+			firstError = err
+		}
+	}
+	return firstError
 }

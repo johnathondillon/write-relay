@@ -3,6 +3,26 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 const base = process.env.LMS_URL || "http://127.0.0.1:3000";
+const monitoring = process.env.RELAY_MONITORING_URL || "http://127.0.0.1:9090";
+async function relay(path) {
+  const response = await fetch(`${monitoring}${path}`, {
+    signal: AbortSignal.timeout(5_000),
+  });
+  assert.equal(
+    response.ok,
+    true,
+    `${path}: ${response.status} ${await response.clone().text()}`,
+  );
+  return response.text();
+}
+async function waitForMetric(line) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if ((await relay("/metrics")).split("\n").includes(line)) return;
+    await delay(250);
+  }
+  throw new Error(`Timed out waiting for metric: ${line}`);
+}
 async function request(path, body) {
   const response = await fetch(`${base}/api/${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -36,6 +56,10 @@ const event = () => ({
 
 try {
   await request("receiver", { mode: "normal" });
+  await relay("/healthz");
+  await waitForMetric("writerelay_capture_connected 1");
+  await waitForMetric("writerelay_spool_sample_fresh 1");
+  assert.equal(JSON.parse(await relay("/readyz")).ready, true);
   const normal = event();
   // Concurrent HTTP retries of one producer request must emit only one event.
   const responses = await Promise.all(
@@ -91,9 +115,19 @@ try {
     true,
   );
   assert.equal(hasCertificate(state, outage.id), false);
+  await waitForMetric(
+    'writerelay_deliveries{sink="certificates",state="retry_wait"} 1',
+  );
+  assert.equal(JSON.parse(await relay("/readyz")).ready, true);
+  console.log(
+    "PASS: receiver outage appears in retry metrics while capture remains ready",
+  );
   await request("receiver", { mode: "normal" });
   await until("automatic recovery", (state) =>
     hasCertificate(state, outage.id),
+  );
+  await waitForMetric(
+    'writerelay_deliveries{sink="certificates",state="retry_wait"} 0',
   );
   console.log(
     "PASS: completion survives receiver failure; delivery retries automatically",

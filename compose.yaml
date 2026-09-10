@@ -22,7 +22,8 @@ services:
       - ./sql/postgres/001_install.sql:/docker-entrypoint-initdb.d/001_install.sql:ro
       - ./sql/postgres/dev_setup.sql:/docker-entrypoint-initdb.d/002_dev_setup.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d writerelay"]
+      # The initialization server accepts socket connections before TCP is ready.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "writerelay"]
       interval: 2s
       timeout: 3s
       retries: 30

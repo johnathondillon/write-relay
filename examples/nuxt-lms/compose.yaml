@@ -21,7 +21,8 @@ services:
       - ../../sql/postgres/001_install.sql:/docker-entrypoint-initdb.d/001_install.sql:ro
       - ./sql/002_example.sql:/docker-entrypoint-initdb.d/002_example.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d writerelay"]
+      # The initialization server accepts socket connections before TCP is ready.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "writerelay"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -44,6 +45,7 @@ services:
     build: ../..
     image: writerelay-lms-relay:local
     command: ["run", "--config", "/etc/writerelay/example.yaml"]
+    ports: ["127.0.0.1:${RELAY_MONITORING_PORT:-9090}:9090"]
     environment: *relay-environment
     volumes: *relay-volumes
     depends_on:
@@ -97,6 +99,7 @@ services:
     volumes: ["./scripts:/example/scripts:ro"]
     environment:
       LMS_URL: http://lms:3000
+      RELAY_MONITORING_URL: http://relay:9090
     command: ["node", "scripts/verify.mjs"]
     depends_on:
       lms: { condition: service_healthy }

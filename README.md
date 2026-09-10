@@ -296,6 +296,34 @@ publication, and example `orders` table. `make setup` validates those objects an
 creates the missing `pgoutput` slot. It never drops or recreates an existing
 object automatically.
 
+## Live health and monitoring
+
+Enable the optional HTTP listener in your configuration, then restart the daemon:
+
+```yaml
+monitoring:
+  listen: 127.0.0.1:9090
+  sample_interval: 15s
+```
+
+```bash
+curl -i http://127.0.0.1:9090/healthz
+curl -i http://127.0.0.1:9090/readyz
+curl http://127.0.0.1:9090/metrics
+```
+
+`healthz` reports process liveness. `readyz` requires an observed replication
+connection and a fresh successful spool sample. Metrics expose capture progress,
+per-sink pending/retry/dead-letter counts, oldest waiting age, retained/pruned
+payload counts, and SQLite file sizes. Receiver failures appear in delivery
+metrics while capture can remain ready. Spool statistics are cached between
+samples; failed or stale samples fail readiness and suppress those counts.
+
+Monitoring is disabled by default and has no authentication. Use loopback or a
+private monitoring network. See the [monitoring guide](docs/monitoring.md) for
+signal limits and Prometheus configuration, or try the
+[LMS walkthrough](examples/nuxt-lms/README.md#watch-live-health-and-metrics).
+
 ## Configuration
 
 Configuration is strict YAML: unknown fields, unsupported versions, invalid
@@ -352,6 +380,7 @@ redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 - [Architecture](docs/architecture.md)
 - [Correctness invariants](docs/correctness.md)
 - [Security model](docs/security-model.md)
+- [Health checks and monitoring](docs/monitoring.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [ADRs](docs/adr)
 
