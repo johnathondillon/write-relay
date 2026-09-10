@@ -125,3 +125,13 @@ The queue and its consumers own processing afterward. A lost acknowledgment can
 still cause duplicate sends, so adding a wrapper does not remove the need for
 duplicate handling. Direct queue support would require a new sink implementation
 and configuration in WriteRelay.
+
+## Can I clean up old events without losing retries or duplicate protection?
+
+Use `spool prune` to remove payloads only after every associated delivery has
+succeeded before your chosen cutoff. Pending work, retries, dead letters, and
+events with no deliveries keep their payloads. Identity/digest and delivery
+history remain, so identical replay is still recognized and conflicting content
+still stops capture. Pruned payloads cannot be backfilled to newly added sinks.
+The [retention guide](retention.md) explains previews, schema upgrades, and why
+cleanup makes SQLite space reusable without automatically shrinking the file.

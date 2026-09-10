@@ -139,7 +139,7 @@ This section records only commands actually executed in this workspace.
 ## Deliberately deferred
 
 - Managed-service compatibility research.
-- Event deletion/retention, UI, non-webhook sinks, other databases, protocol
+- Event/identity deletion, automatic retention, UI, non-webhook sinks, other databases, protocol
   versions 2–4, two-phase commit, and transaction streaming.
 - SBOM generation and spool size policy.
 
@@ -153,8 +153,22 @@ This section records only commands actually executed in this workspace.
 - [ ] Go and C# SDKs, full CloudEvents conformance coverage, and separate
   consumer inbox helpers.
 
-The TypeScript package remains unpublished. Explicit retention and spool-size
-policy remain later work.
+The TypeScript package remains unpublished. Automatic retention and a hard
+spool-size policy remain later work.
+
+## Manual payload retention
+
+- Schema 3 retains event identity/digest and delivery history when pruning old,
+  fully delivered payloads. Pending, retrying, dead-letter, and capture-only
+  payloads remain intact.
+- `spool prune --before ... --dry-run` previews a bounded batch; apply serializes
+  selection and updates with SQLite's write lock. Prune never advances the ACK
+  checkpoint or backfills pruned payloads to new sinks.
+- Focused migration, replay, cancellation, concurrency, CLI, and process-crash
+  coverage plus pruned-identity replay in the PostgreSQL matrix.
+- `make check`, `make race`, `make failure`, `make vuln`, and
+  `make integration-matrix` passed locally on 2026-09-09, including PostgreSQL
+  14.24, 15.19, 16.15, 17.11, and 18.4. No user spool was pruned during testing.
 
 ## PostgreSQL compatibility matrix
 

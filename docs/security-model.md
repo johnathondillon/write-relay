@@ -29,8 +29,10 @@ host access controls, and secure deletion remain operator responsibilities.
 
 Delivery history retains destination status, bounded safe error categories, and
 event identity, but never response bodies, authorization values, signing
-secrets, or webhook URLs. Dead-letter records remain until a future explicit
-retention policy is implemented.
+secrets, or webhook URLs. Dead-letter records remain available for redrive.
+Manual [payload retention](retention.md) removes only fully delivered payloads;
+identity, metadata, and delivery history remain. Pruning is not secure erasure
+and does not remove old bytes from WAL files, snapshots, or backups.
 
 ## Configuration and secrets
 
@@ -78,7 +80,8 @@ bounded busy timeout and a single writer connection.
 Webhook requests have a bounded timeout, redirects are disabled, response bodies
 are read only to a small bound, retries have bounded delay and attempt count,
 and stored error text is capped. The current implementation still has no
-spool-size or retention limit. Operators must monitor disk and PostgreSQL
+automatic spool-size limit. Manual payload pruning frees reusable SQLite space
+but retains metadata/history and does not shrink files. Operators must monitor disk and PostgreSQL
 retained WAL. A future limit must fail closed.
 
 ## Failure-test isolation

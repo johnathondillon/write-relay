@@ -144,7 +144,9 @@ journaling, `synchronous=FULL`, foreign keys, and a five-second busy timeout.
 Schema migrations are embedded and applied sequentially. Version 2 adds durable
 sink identities and per-event delivery records. An event insert and all delivery
 records for active sinks commit in the capture transaction. A newly configured
-sink is registered and backfilled for existing events in one SQLite transaction.
+sink is registered and backfilled for existing events with retained payloads in
+one SQLite transaction. Schema 3 adds a pruning timestamp and guards for removing
+only successfully delivered payloads; identity/digest and delivery history remain.
 The spool directory and file are created with restrictive permissions, and an
 existing symlink at the spool path is rejected.
 
@@ -164,7 +166,14 @@ failed record remains available for inspection and explicit redrive.
 Sink name is durable identity. Its type and non-secret target fingerprint cannot
 change in place; operators use a new name for a new destination. Removing a
 sink with non-terminal deliveries is rejected. Re-enabling the same durable
-sink backfills events captured while it was inactive.
+sink backfills retained payloads captured while it was inactive.
+
+Manual `spool prune` uses `BEGIN IMMEDIATE` before checking eligibility and removes
+payloads only when every associated delivery succeeded before an explicit cutoff.
+Its write lock serializes with capture and sink backfill. Replay of a pruned
+identity verifies the original digest without restoring payloads or deliveries.
+The checkpoint is unchanged. See [ADR 0007](adr/0007-delivered-payload-retention.md)
+and the [retention guide](retention.md).
 
 Webhook delivery sends the raw structured event with a stable idempotency key.
 Redirects are disabled to prevent credential forwarding. Optional authorization
