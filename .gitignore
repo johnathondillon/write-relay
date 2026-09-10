@@ -23,3 +23,6 @@ coverage.out
 # Editor and IDE metadata
 /.idea/
 /.vscode/
+
+# Local release packages and saved Docker images
+/dist/

@@ -1,0 +1,196 @@
+name: preview-release
+
+on:
+  pull_request:
+    paths: ['.github/workflows/release.yml', 'scripts/*release*', 'Dockerfile', '.dockerignore', 'go.*', 'cmd/**', 'internal/**', 'sql/**', 'docs/**', 'README.md', 'LICENSE', 'writerelay.example.yaml', 'Makefile']
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['.github/workflows/release.yml', 'scripts/*release*', 'Dockerfile', '.dockerignore', 'go.*', 'cmd/**', 'internal/**', 'sql/**', 'docs/**', 'README.md', 'LICENSE', 'writerelay.example.yaml', 'Makefile']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.build.outputs.version }}
+      commit: ${{ steps.build.outputs.commit }}
+      date: ${{ steps.build.outputs.date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - id: build
+        shell: bash
+        run: |
+          version=v0.0.0-preview.0
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            version="$GITHUB_REF_NAME"
+            if [[ ! "$version" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(preview|alpha|beta|rc)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "Only preview tags such as v0.1.0-preview.1 are supported" >&2
+              exit 1
+            fi
+            git merge-base --is-ancestor HEAD origin/main
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "date=$(git show -s --format=%cI HEAD)" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: metadata
+    name: Package ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {os: linux, arch: amd64, runner: ubuntu-24.04}
+          - {os: linux, arch: arm64, runner: ubuntu-24.04-arm}
+          - {os: darwin, arch: amd64, runner: macos-15-intel}
+          - {os: darwin, arch: arm64, runner: macos-15}
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      COMMIT: ${{ needs.metadata.outputs.commit }}
+      BUILD_DATE: ${{ needs.metadata.outputs.date }}
+      GOOS: ${{ matrix.os }}
+      GOARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Package and verify archive
+        shell: bash
+        run: |
+          make package
+          (cd dist && shasum -a 256 -c *.sha256)
+          python3 scripts/smoke-release.py \
+            --archive "dist/writerelay_${VERSION}_${GOOS}_${GOARCH}.tar.gz" \
+            --version "$VERSION" --commit "$COMMIT"
+      - name: Build and verify native Docker image
+        if: matrix.os == 'linux'
+        shell: bash
+        run: |
+          image="writerelay-preview:${VERSION}-${GOARCH}"
+          docker build --build-arg "VERSION=$VERSION" --build-arg "COMMIT=$COMMIT" \
+            --build-arg "BUILD_DATE=$BUILD_DATE" -t "$image" .
+          python3 scripts/smoke-release.py --image "$image" --version "$VERSION" --commit "$COMMIT"
+          docker save "$image" | gzip > "dist/writerelay-image-linux-${GOARCH}.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: package-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  checks:
+    needs: metadata
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: make check race failure vuln
+
+  integration:
+    needs: metadata
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['14', '15', '16', '17', '18']
+    env:
+      POSTGRES_VERSION: ${{ matrix.postgres }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - run: make integration-version
+
+  publish:
+    needs: [metadata, package, checks, integration]
+    if: startsWith(github.ref, 'refs/tags/') && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+    env:
+      VERSION: ${{ needs.metadata.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Verify artifacts and publish preview
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          cd dist
+          for target in linux_amd64 linux_arm64 darwin_amd64 darwin_arm64; do
+            shasum -a 256 -c "writerelay_${VERSION}_${target}.tar.gz.sha256"
+          done
+          cat writerelay_*.tar.gz.sha256 > SHA256SUMS
+          # Refuse to replace an existing release. Partial publication is documented
+          # in the release guide; a new tag is preferred over moving an old one.
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release already exists; refusing to replace it" >&2
+            exit 1
+          fi
+          printf '%s' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          for arch in amd64 arm64; do
+            gzip -dc "writerelay-image-linux-${arch}.tar.gz" | docker load
+            docker tag "writerelay-preview:${VERSION}-${arch}" "$image:${VERSION}-${arch}"
+            docker push "$image:${VERSION}-${arch}"
+          done
+          docker buildx imagetools create --tag "$image:$VERSION" \
+            "$image:${VERSION}-amd64" "$image:${VERSION}-arm64"
+          docker buildx imagetools inspect "$image:$VERSION"
+          cat > release-notes.md <<NOTES
+          WriteRelay $VERSION is an architectural preview, not a production-ready release.
+
+          Download the archive for your platform and verify it against SHA256SUMS.
+          Each archive includes the binary, example configuration, SQL installer, license, and documentation.
+
+          Docker: \`$image:$VERSION\` (Linux amd64 and arm64).
+          See the bundled docs/installation.md for installation and operational requirements.
+
+          Checksums detect corrupted downloads; they are not signatures. macOS binaries are not notarized.
+          NOTES
+          gh release create "$VERSION" writerelay_*.tar.gz SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --prerelease --latest=false \
+            --title "WriteRelay $VERSION" --notes-file release-notes.md
