@@ -36,6 +36,9 @@
     returns it to the ordered state machine.
 21. Failure hooks are inert unless directly injected in code; production
     configuration and environment variables cannot activate them.
+22. Payload pruning requires at least one delivery and success before the cutoff
+    for every associated sink. It never removes identity, digest, history, or
+    checkpoint state. Pruned identities cannot gain new deliveries or payloads.
 
 ## Answers required by Milestone 1
 
@@ -97,6 +100,14 @@ and prior event metadata and delivery state remain unchanged. This exercises
 identity replay through a new PostgreSQL emission; it does not force PostgreSQL
 to resend acknowledged WAL. The process-crash tests below cover crash boundaries
 separately.
+
+Retention tests cover mixed and inactive sink history, cutoff boundaries, bounded
+batches, read-only previews, existing-spool migration, cancellation rollback, and
+concurrent sink registration. Identical pruned replay stays deduplicated and
+conflicting content still fails closed. Child processes terminate after a payload
+update and after prune commit to prove atomic recovery. The PostgreSQL matrix
+also re-emits a pruned identity with a later marker and verifies no new delivery
+or restored payload for the old identity.
 
 Spool statistics tests cover multi-sink totals, terminal-state exclusion from
 waiting age, inactive and empty sinks, capture-only mode, backfill, and redrive

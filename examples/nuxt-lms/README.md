@@ -204,6 +204,37 @@ docker compose exec relay writerelayd spool list --config /etc/writerelay/exampl
 docker compose logs -f relay certificate
 ```
 
+## Try payload cleanup
+
+Rebuild the updated stack first with `docker compose up --build --wait` so the
+daemon migrates its spool to schema 3. Complete a course normally and wait for
+its certificate. For this disposable example, choose the current UTC cutoff:
+
+```bash
+PRUNE_BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+docker compose exec relay writerelayd spool prune \
+  --config /etc/writerelay/example.yaml \
+  --before "$PRUNE_BEFORE" --limit 100 --dry-run
+```
+
+The JSON preview lists event IDs and payload-byte counts eligible for cleanup.
+Only deliveries that succeeded before the cutoff qualify. To apply, use the
+same cutoff without `--dry-run`:
+
+```bash
+docker compose exec relay writerelayd spool prune \
+  --config /etc/writerelay/example.yaml \
+  --before "$PRUNE_BEFORE" --limit 100
+docker compose exec relay writerelayd spool stats \
+  --config /etc/writerelay/example.yaml
+```
+
+Stats now reports pruned payloads, while saved completions and certificates stay
+visible in the LMS. Pending work and dead letters remain available. The spool
+keeps identities and delivery history; it does not automatically shrink the
+SQLite file. New sinks cannot backfill pruned payloads. See the
+[retention guide](../../docs/retention.md) before choosing a cutoff for real data.
+
 ## Read the integration code
 
 - [Producer transaction](server/api/completions.post.ts): save the completion,

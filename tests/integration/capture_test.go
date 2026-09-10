@@ -340,7 +340,32 @@ func TestTransactionalCapture(t *testing.T) {
 	if replayedAttempts != 1 {
 		t.Fatalf("already-delivered identity was sent again: attempts=%d", replayedAttempts)
 	}
-	t.Log("verified commit, rollback, ordering, retry, ACK, restart, offline capture, and identical identity replay")
+	// Pruning must retain identities even when replay comes through PostgreSQL.
+	pruned, err := sqlitespool.Prune(ctx, cfg.Spool.Path, sqlitespool.PruneOptions{Before: time.Now().UTC(), Limit: 1000})
+	if err != nil || pruned.Events != len(afterEvents) {
+		t.Fatalf("prune delivered payloads: events=%d err=%v", pruned.Events, err)
+	}
+	afterPruneID := "evt-after-prune-" + suffix
+	inTransaction(t, ctx, admin, "ord-after-prune-"+suffix, true, []string{
+		eventJSON(committedID, "order.paid"),
+		eventJSON(afterPruneID, "order.after-prune"),
+	})
+	stopAfterPrune := startRuntime(t, cfg, store, webhookSender, logger)
+	waitForDelivered(t, ctx, store, afterPruneID, 1)
+	if err := stopAfterPrune(); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := sqlitespool.ReadStats(ctx, cfg.Spool.Path)
+	if err != nil || stats.PrunedPayloads != int64(len(afterEvents)) || stats.EventCount != int64(len(afterEvents)+1) {
+		t.Fatalf("pruned identity replay changed payload/identity counts: %+v err=%v", stats, err)
+	}
+	webhookMu.Lock()
+	prunedReplayAttempts := webhookAttempts[committedID]
+	webhookMu.Unlock()
+	if prunedReplayAttempts != 1 {
+		t.Fatalf("pruned identity redelivered: attempts=%d", prunedReplayAttempts)
+	}
+	t.Log("verified commit, rollback, ordering, retry, ACK, restart, offline capture, identity replay, and payload pruning")
 }
 
 func startRuntime(

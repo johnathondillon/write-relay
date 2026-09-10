@@ -624,13 +624,14 @@ writerelayd spool list --config writerelay.yaml
 
 or a small internal test helper that allows integration tests to inspect captured rows. A user-facing inspect command is preferred if it does not distort the core work.
 
-Do not implement event deletion yet. Retention begins after a delivery state machine exists.
+Event rows remain retained. Manual delivered-payload retention is specified in
+[ADR 0007](adr/0007-delivered-payload-retention.md).
 
 ## 10.4 Delivery schema and state
 
 Schema migration version 2 adds durable sink identity and a composite delivery
 record keyed by `(event_sequence, sink_id)`. New event and active-sink delivery
-rows commit together. Registering a new sink backfills every existing event in
+rows commit together. Registering a new sink backfills every existing event with a retained payload in
 the same SQLite transaction.
 
 Delivery states are:
@@ -647,6 +648,15 @@ dead_letter ── explicit operator redrive ──► retry_wait
 `delivered` and `dead_letter` are retained terminal states. There is no event
 deletion in Milestone 2.
 
+Schema 3 adds `payload_pruned_at`. The manual `spool prune --before <RFC3339>`
+command replaces payload bytes only when every associated delivery has succeeded
+strictly before the cutoff; at least one delivery must exist. `--dry-run` is a
+read-only preview and `--limit` bounds the transaction to 1–1000 events (default
+1000). Event identity, digest, metadata, delivery rows, and checkpoint remain.
+Backfill and identical replay skip pruned payloads; conflicting identity content
+still fails. See the [retention guide](retention.md) for schema upgrades and
+space-reuse limitations.
+
 ---
 
 # 11. CLI and configuration
@@ -661,6 +671,7 @@ writerelayd doctor --config ./writerelay.yaml
 writerelayd setup --config ./writerelay.yaml --create-slot
 writerelayd spool stats --config ./writerelay.yaml
 writerelayd spool stats --config ./writerelay.yaml --json
+writerelayd spool prune --config ./writerelay.yaml --before 2026-09-01T00:00:00Z --dry-run
 writerelayd spool list --config ./writerelay.yaml --limit 20
 writerelayd spool deliveries --config ./writerelay.yaml --state dead_letter
 writerelayd spool redrive --config ./writerelay.yaml --sink NAME --source SOURCE --id ID

@@ -9,6 +9,20 @@ type Hooks struct {
 	AfterAcknowledgment    func()
 	BeforeSinkRequest      func()
 	AfterSinkSuccess       func()
+	AfterPrunePayload      func(index int)
+	AfterPruneCommit       func()
+}
+
+func (h Hooks) CallAfterPrunePayload(index int) {
+	if h.AfterPrunePayload != nil {
+		h.AfterPrunePayload(index)
+	}
+}
+
+func (h Hooks) CallAfterPruneCommit() {
+	if h.AfterPruneCommit != nil {
+		h.AfterPruneCommit()
+	}
 }
 
 func (h Hooks) CallBeforeSpoolTransaction() {

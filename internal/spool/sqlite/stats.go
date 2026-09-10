@@ -46,6 +46,7 @@ type FileSizes struct {
 type Stats struct {
 	SampledAt      time.Time      `json:"sampled_at"`
 	EventCount     int64          `json:"event_count"`
+	PrunedPayloads int64          `json:"pruned_payloads"`
 	LastDurableLSN string         `json:"last_durable_lsn"`
 	Deliveries     DeliveryCounts `json:"deliveries"`
 	OldestWaiting  *WaitingStats  `json:"oldest_waiting"`
@@ -108,7 +109,7 @@ func readStatsSnapshot(ctx context.Context, db *sql.DB) (Stats, error) {
 	if version != currentSchemaVersion {
 		return result, fmt.Errorf("spool stats requires schema version %d, found %d; stats does not migrate the spool", currentSchemaVersion, version)
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&result.EventCount); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(payload_pruned_at IS NOT NULL), 0) FROM events`).Scan(&result.EventCount, &result.PrunedPayloads); err != nil {
 		return result, fmt.Errorf("count captured events: %w", err)
 	}
 	lsn, err := lastDurableLSNTx(ctx, tx)
