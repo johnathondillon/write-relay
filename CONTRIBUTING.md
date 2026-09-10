@@ -13,6 +13,14 @@ make vuln
 make integration
 ```
 
+CI additionally runs the integration suite against PostgreSQL 14–18. Run that
+same matrix locally with `make integration-matrix`, or select one version with
+`POSTGRES_VERSION=14 make integration-version` (default: 18). These commands
+start disposable Docker Compose databases on automatically assigned loopback
+ports, verify the server major, and clean up their own containers and anonymous
+volumes on exit. They leave the persistent development and LMS databases alone.
+Each test logs the exact server version for compatibility evidence.
+
 Unit tests must not require Docker. Integration tests use the `integration`
 build tag, temporary spool paths, unique slots/publications, bounded polling,
 and deterministic event identities where practical.

@@ -42,9 +42,9 @@ delivery system. Its public project name is **WriteRelay**, its repository name
 is `write-relay`, and its Go module path is
 `github.com/johnathondillon/write-relay`.
 
-The current implementation targets PostgreSQL 14–18 and is locally exercised
-with PostgreSQL 18. Compatibility across every declared major version still
-needs CI coverage.
+The current implementation targets PostgreSQL 14–18. The CI integration matrix
+tests every declared major version using official PostgreSQL Docker images.
+Managed-service compatibility remains unverified.
 
 Milestone 4 has started with an unpublished
 [TypeScript/Node producer SDK](sdk/typescript/README.md), used by the
@@ -305,11 +305,27 @@ make vuln
 make check
 make integration
 make postgres-down
+POSTGRES_VERSION=14 make integration-version
+make integration-matrix
 ```
 
-Integration tests use Docker Compose and prove committed capture, rollback
-absence, ordering within a transaction, durable checkpoint acknowledgment,
-webhook delivery/retry, and graceful shutdown. Focused tests cover replay,
+`make integration` uses the persistent PostgreSQL 18 development database.
+`make integration-version` creates a disposable database for the selected major
+(18 by default). `make integration-matrix` runs all five versions, 14–18.
+The disposable runs use unique Compose projects and automatically assigned
+loopback ports, print the exact server version, and remove their containers
+and anonymous volumes on exit. They do not use the development or LMS volumes.
+Go and Docker Compose are required; the first run downloads database images.
+
+The [CI matrix](.github/workflows/ci.yml) runs the same disposable test command
+on pushes and pull requests, with an independent result for each major version.
+Failures print PostgreSQL logs and do not cancel the other matrix jobs.
+
+Integration tests prove committed capture, rollback absence, ordering within a
+transaction, durable checkpoint acknowledgment, webhook delivery/retry, and
+graceful shutdown. They reopen the SQLite spool, capture events committed while
+the relay is stopped, and verify that re-emitting identical event content does
+not duplicate event or delivery records. Focused tests cover replay,
 identity conflicts, sink backfill, per-sink order, retry/dead-letter state,
 redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 

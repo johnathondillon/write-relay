@@ -138,7 +138,7 @@ This section records only commands actually executed in this workspace.
 
 ## Deliberately deferred
 
-- PostgreSQL 14–17 CI matrix and managed-service compatibility research.
+- Managed-service compatibility research.
 - Event deletion/retention, UI, non-webhook sinks, other databases, protocol
   versions 2–4, two-phase commit, and transaction streaming.
 - SBOM generation, metrics, and spool size policy.
@@ -155,3 +155,19 @@ This section records only commands actually executed in this workspace.
 
 The TypeScript package remains unpublished. Explicit retention and spool-size
 policy remain later work.
+
+## PostgreSQL compatibility matrix
+
+- [x] CI runs independent PostgreSQL 14, 15, 16, 17, and 18 integration jobs with
+  fail-fast disabled, using official Docker images and the Go version in `go.mod`.
+- [x] `make integration-version` and `make integration-matrix` use disposable
+  databases, unique project names, dynamic loopback ports, and automatic cleanup.
+- [x] Integration tests log and verify the server major, then exercise commit,
+  rollback, transaction order, webhook retry, and durable ACK.
+- [x] Graceful runtime restart reopens the same spool, preserves its checkpoint,
+  catches up with offline commits, and deduplicates identical identity/content
+  without changing existing event metadata or delivery state.
+- [x] Local matrix on 2026-09-09 passed against PostgreSQL 14.24, 15.19, 16.15,
+  17.11, and 18.4. Each disposable database was removed after its run.
+- [x] `make check`, `make failure`, and `make vuln` passed after the matrix and
+  restart coverage were added. Hosted CI results will be available after push.
