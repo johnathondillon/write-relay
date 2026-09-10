@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration
+.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration integration-version integration-matrix
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -47,3 +47,11 @@ setup: ## Install SQL objects and create the development slot
 
 integration: postgres-up ## Run Docker-backed integration tests
 	go test -tags=integration -count=1 -v ./tests/integration/...
+
+integration-version: ## Test a disposable PostgreSQL instance (POSTGRES_VERSION=14..18; default 18)
+	bash scripts/integration-version.sh
+
+integration-matrix: ## Run integration tests against PostgreSQL 14 through 18
+	@result=0; for version in 14 15 16 17 18; do \
+		POSTGRES_VERSION=$$version bash scripts/integration-version.sh || result=1; \
+	done; exit $$result

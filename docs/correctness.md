@@ -41,12 +41,12 @@
 
 1. The pinned `pglogrepl` decodes the protocol-v1 `M` logical message into
    transactional flag, message LSN, prefix, and raw content. A constructed-wire
-   unit test and PostgreSQL 18 integration test exercise this with
+   unit test and PostgreSQL 14–18 integration matrix exercise this with
    `pgoutput`/`messages=true`.
 2. PostgreSQL documents that `CREATE PUBLICATION name` creates an empty
-   publication. The integration test verifies this on PostgreSQL 18. PostgreSQL
-   14–17 remain to be added to the CI matrix; support is not yet empirically
-   claimed for every environment.
+   publication. The integration matrix verifies this on PostgreSQL 14–18 using
+   official Docker images. This does not establish compatibility with every
+   managed service or deployment configuration.
 3. The ACK uses transaction-end LSN, not commit LSN. It is the boundary after
    the completed transaction and is stored atomically with the batch.
 4. A new/empty spool starts from the slot's confirmed flush LSN, falling back to
@@ -86,6 +86,17 @@ identity was not merely delayed. It also runs the delivery worker against a
 bounded local webhook, proves a committed event reaches the destination, proves
 the rolled-back event does not, and observes a transient `503` retry reaching
 durable `delivered` state.
+
+The same test runs against PostgreSQL 14–18 in CI and logs the exact server
+version, checking it against the requested matrix major. It gracefully stops
+the runtime, closes and reopens the SQLite file, and checks that its durable
+checkpoint survives. A transaction committed while the relay is stopped
+contains both an identical prior event and a new event. After restart, the new
+event is captured and delivered, the checkpoint advances and is acknowledged,
+and prior event metadata and delivery state remain unchanged. This exercises
+identity replay through a new PostgreSQL emission; it does not force PostgreSQL
+to resend acknowledged WAL. The process-crash tests below cover crash boundaries
+separately.
 
 Spool statistics tests cover multi-sink totals, terminal-state exclusion from
 waiting age, inactive and empty sinks, capture-only mode, backfill, and redrive

@@ -164,6 +164,13 @@ The underlying dual-write problem is database-independent, but the optimized imp
 - JSON events using a constrained CloudEvents 1.0-compatible structured envelope.
 - SQLite as the local durable spool.
 
+The CI integration matrix exercises PostgreSQL 14–18 using official Docker
+images. `make integration-version` selects a disposable test database with
+`POSTGRES_VERSION` (default 18); `make integration-matrix` runs all five majors.
+Each run checks the actual server major and covers commit, rollback, ordering,
+delivery retry, durable ACK, graceful restart, offline capture, and identical
+identity replay. Managed-service compatibility remains separate work.
+
 ## Why protocol version 1 initially
 
 The initial product transports small, explicit domain events. It does not need in-progress streaming of very large transactions. Protocol version 1 avoids handling `Stream Start`, `Stream Stop`, streamed subtransactions, stream aborts, and two-phase-commit messages in the first implementation.

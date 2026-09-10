@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -92,7 +93,7 @@ func TestTransactionalCapture(t *testing.T) {
 		Logging: config.LoggingConfig{Level: "info", Format: "text"},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, dsn)
 	if err != nil {
@@ -109,6 +110,20 @@ func TestTransactionalCapture(t *testing.T) {
 		}
 	})
 	defer admin.Close(context.Background())
+	var serverVersion string
+	var serverVersionNum int
+	if err := admin.QueryRow(ctx,
+		`SELECT current_setting('server_version'), current_setting('server_version_num')::integer`,
+	).Scan(&serverVersion, &serverVersionNum); err != nil {
+		t.Fatalf("read PostgreSQL version: %v", err)
+	}
+	t.Logf("PostgreSQL %s (server_version_num=%d)", serverVersion, serverVersionNum)
+	if expected := os.Getenv("WRITERELAY_INTEGRATION_POSTGRES_MAJOR"); expected != "" {
+		major, err := strconv.Atoi(expected)
+		if err != nil || serverVersionNum/10000 != major {
+			t.Fatalf("expected PostgreSQL major %q, connected to %s", expected, serverVersion)
+		}
+	}
 
 	if _, err := admin.Exec(ctx, install.InstallSQL); err != nil {
 		t.Fatalf("apply idempotent SQL installation: %v", err)
@@ -153,38 +168,7 @@ func TestTransactionalCapture(t *testing.T) {
 	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{registration}); err != nil {
 		t.Fatal(err)
 	}
-	runCtx, stopRun := context.WithCancel(context.Background())
-	runDone := make(chan error, 2)
-	go func() {
-		runDone <- commitpostgres.NewReplicator(cfg, store, logger).Run(runCtx)
-	}()
-	go func() {
-		worker := delivery.NewWorker(
-			store,
-			map[string]delivery.Sink{"integration_webhook": webhookSender},
-			cfg.Delivery.PollInterval, cfg.Delivery.Retry.InitialDelay,
-			cfg.Delivery.Retry.MaxDelay, cfg.Delivery.Retry.MaxAttempts, logger,
-		)
-		runDone <- worker.Run(runCtx)
-	}()
-	var stopOnce sync.Once
-	var runErr error
-	stopAndWait := func() {
-		stopOnce.Do(func() {
-			stopRun()
-			for component := 0; component < 2; component++ {
-				select {
-				case err := <-runDone:
-					if err != nil && runErr == nil {
-						runErr = err
-					}
-				case <-time.After(5 * time.Second):
-					runErr = fmt.Errorf("runtime component did not shut down gracefully")
-				}
-			}
-		})
-	}
-	t.Cleanup(stopAndWait)
+	stopAndWait := startRuntime(t, cfg, store, webhookSender, logger)
 
 	committedID := "evt-committed-" + suffix
 	inTransaction(t, ctx, admin, "ord-committed-"+suffix, true,
@@ -215,7 +199,10 @@ func TestTransactionalCapture(t *testing.T) {
 	inTransaction(t, ctx, admin, "ord-marker-"+suffix, true,
 		[]string{eventJSON(markerID, "marker")})
 	waitForID(t, ctx, store, markerID)
-	rows, _ = store.ListEvents(ctx, 100)
+	rows, err = store.ListEvents(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if findEvent(rows, rolledBackID) != nil {
 		t.Fatalf("rolled-back event %q reached the spool", rolledBackID)
 	}
@@ -239,7 +226,10 @@ func TestTransactionalCapture(t *testing.T) {
 		eventJSON(secondID, "batch.item"),
 	})
 	waitForID(t, ctx, store, secondID)
-	rows, _ = store.ListEvents(ctx, 100)
+	rows, err = store.ListEvents(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
 	first := findEvent(rows, firstID)
 	second := findEvent(rows, secondID)
 	if first == nil || second == nil ||
@@ -263,10 +253,141 @@ func TestTransactionalCapture(t *testing.T) {
 	}
 	waitForConfirmedLSN(t, ctx, admin, slot, durable)
 
-	stopAndWait()
-	if runErr != nil {
-		t.Fatalf("replicator shutdown: %v", runErr)
+	if err := stopAndWait(); err != nil {
+		t.Fatalf("runtime shutdown: %v", err)
 	}
+
+	// Reopen the real spool, then catch up with transactions committed offline.
+	// Re-emitting identical content exercises identity replay through pgoutput;
+	// it does not force the server to resend already acknowledged WAL.
+	beforeEvents, err := store.ListEvents(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDeliveries, err := store.ListDeliveries(ctx, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint, err := store.LastDurableLSN(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := sqlitespool.Open(ctx, cfg.Spool.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store = reopened
+	if got, err := store.LastDurableLSN(ctx); err != nil || got != checkpoint {
+		t.Fatalf("checkpoint changed on reopen: got=%s want=%s err=%v", got, checkpoint, err)
+	}
+	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{registration}); err != nil {
+		t.Fatal(err)
+	}
+	offlineID := "evt-offline-" + suffix
+	inTransaction(t, ctx, admin, "ord-offline-"+suffix, true, []string{
+		eventJSON(committedID, "order.paid"),
+		eventJSON(offlineID, "order.offline"),
+	})
+	stopRestart := startRuntime(t, cfg, store, webhookSender, logger)
+	waitForID(t, ctx, store, offlineID)
+	waitForDelivered(t, ctx, store, offlineID, 1)
+	afterCheckpoint, err := store.LastDurableLSN(ctx)
+	if err != nil || afterCheckpoint <= checkpoint {
+		t.Fatalf("restart did not advance checkpoint: before=%s after=%s err=%v", checkpoint, afterCheckpoint, err)
+	}
+	waitForConfirmedLSN(t, ctx, admin, slot, afterCheckpoint)
+	if err := stopRestart(); err != nil {
+		t.Fatalf("restarted runtime shutdown: %v", err)
+	}
+	afterEvents, err := store.ListEvents(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterEvents) != len(beforeEvents)+1 {
+		t.Fatalf("restart/replay changed event count: before=%d after=%d", len(beforeEvents), len(afterEvents))
+	}
+	for _, before := range beforeEvents {
+		after := findEvent(afterEvents, before.ID)
+		if after == nil || !reflect.DeepEqual(before, *after) {
+			t.Fatalf("restart/replay changed stored event %q", before.ID)
+		}
+	}
+	afterDeliveries, err := store.ListDeliveries(ctx, "", 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(afterDeliveries) != len(beforeDeliveries)+1 {
+		t.Fatalf("restart/replay changed delivery count: before=%d after=%d", len(beforeDeliveries), len(afterDeliveries))
+	}
+	for _, before := range beforeDeliveries {
+		found := false
+		for _, after := range afterDeliveries {
+			if before.ID == after.ID && before.SinkName == after.SinkName {
+				found = reflect.DeepEqual(before, after)
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("restart/replay changed delivery %q", before.ID)
+		}
+	}
+	webhookMu.Lock()
+	replayedAttempts := webhookAttempts[committedID]
+	webhookMu.Unlock()
+	if replayedAttempts != 1 {
+		t.Fatalf("already-delivered identity was sent again: attempts=%d", replayedAttempts)
+	}
+	t.Log("verified commit, rollback, ordering, retry, ACK, restart, offline capture, and identical identity replay")
+}
+
+func startRuntime(
+	t *testing.T,
+	cfg config.Config,
+	store *sqlitespool.Store,
+	sender delivery.Sink,
+	logger *slog.Logger,
+) func() error {
+	t.Helper()
+	runCtx, stopRun := context.WithCancel(context.Background())
+	runDone := make(chan error, 2)
+	go func() {
+		runDone <- commitpostgres.NewReplicator(cfg, store, logger).Run(runCtx)
+	}()
+	go func() {
+		worker := delivery.NewWorker(
+			store, map[string]delivery.Sink{"integration_webhook": sender},
+			cfg.Delivery.PollInterval, cfg.Delivery.Retry.InitialDelay,
+			cfg.Delivery.Retry.MaxDelay, cfg.Delivery.Retry.MaxAttempts, logger,
+		)
+		runDone <- worker.Run(runCtx)
+	}()
+	var stopOnce sync.Once
+	var runErr error
+	stopAndWait := func() error {
+		stopOnce.Do(func() {
+			stopRun()
+			for component := 0; component < 2; component++ {
+				select {
+				case err := <-runDone:
+					if err != nil && runErr == nil {
+						runErr = err
+					}
+				case <-time.After(5 * time.Second):
+					runErr = fmt.Errorf("runtime component did not shut down gracefully")
+				}
+			}
+		})
+		return runErr
+	}
+	t.Cleanup(func() {
+		if err := stopAndWait(); err != nil {
+			t.Errorf("runtime cleanup: %v", err)
+		}
+	})
+	return stopAndWait
 }
 
 func waitForWebhookAttempts(
