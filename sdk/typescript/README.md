@@ -5,6 +5,11 @@ transaction client. It has no runtime dependencies and works with the
 promise-based `pg` client API. This initial package supports Node 22+ and ESM.
 It is kept private and has **not been published to npm**.
 
+The SDK currently builds with TypeScript 5.9.
+[Dependabot](../../.github/dependabot.yml) allows minor and patch compiler
+updates; major upgrades are reviewed manually and verified with the SDK tests
+and Nuxt example before adoption.
+
 ## Try it locally
 
 The [Nuxt LMS example](../../examples/nuxt-lms/README.md) uses this SDK through
