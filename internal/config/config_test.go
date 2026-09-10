@@ -150,3 +150,21 @@ func TestExampleConfigurationStaysValid(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestMonitoringConfiguration(t *testing.T) {
+	cfg, err := Decode(strings.NewReader(validConfig))
+	if err != nil || cfg.Monitoring.Listen != "" || cfg.Monitoring.SampleInterval.String() != "15s" {
+		t.Fatalf("monitoring defaults: %+v %v", cfg.Monitoring, err)
+	}
+	for _, address := range []string{"127.0.0.1:9090", "[::1]:9090", "0.0.0.0:9090"} {
+		cfg, err := Decode(strings.NewReader(validConfig + "\nmonitoring:\n  listen: '" + address + "'\n  sample_interval: 1s\n"))
+		if err != nil || cfg.Monitoring.Listen != address || cfg.Monitoring.SampleInterval.String() != "1s" {
+			t.Fatalf("valid monitoring: %+v %v", cfg.Monitoring, err)
+		}
+	}
+	for _, settings := range []string{"listen: ':9090'", "listen: 'localhost:9090'", "listen: '127.0.0.1:0'", "listen: '127.0.0.1:65536'", "sample_interval: 1ms", "sample_interval: 10m", "sample_interval: nope", "unknown: true"} {
+		if _, err := Decode(strings.NewReader(validConfig + "\nmonitoring:\n  " + settings + "\n")); err == nil {
+			t.Fatalf("accepted invalid monitoring: %s", settings)
+		}
+	}
+}

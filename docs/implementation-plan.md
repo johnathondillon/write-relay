@@ -141,7 +141,7 @@ This section records only commands actually executed in this workspace.
 - Managed-service compatibility research.
 - Event deletion/retention, UI, non-webhook sinks, other databases, protocol
   versions 2–4, two-phase commit, and transaction streaming.
-- SBOM generation, metrics, and spool size policy.
+- SBOM generation and spool size policy.
 
 ## Milestone 4 progress
 
@@ -171,3 +171,18 @@ policy remain later work.
   17.11, and 18.4. Each disposable database was removed after its run.
 - [x] `make check`, `make failure`, and `make vuln` passed after the matrix and
   restart coverage were added. Hosted CI results will be available after push.
+
+## Live monitoring
+
+- Optional HTTP liveness/readiness endpoints and Prometheus text metrics.
+- Observed capture connection/progress, cached delivery counts and waiting age,
+  payload retention counts, and SQLite file lengths.
+- Background read-only sampling with deadlines and explicit failure/staleness
+  behavior; no changes to durability, acknowledgment, or retry decisions.
+- LMS outage walkthrough and automated checks for retry metrics with capture
+  readiness, plus replication disconnect/reconnect coverage in the PG matrix.
+- `make check`, `make race`, `make failure`, `make vuln`, and the PostgreSQL
+  14.24/15.19/16.15/17.11/18.4 integration matrix passed on 2026-09-10.
+- The Docker LMS build and behavior checks passed in a separate disposable
+  stack. Stopping its PostgreSQL produced `/readyz` 503 with `/healthz` 200;
+  restarting PostgreSQL restored readiness. The user's example data was untouched.

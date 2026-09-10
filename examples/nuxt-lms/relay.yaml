@@ -20,6 +20,9 @@ delivery:
       url: http://certificate:3001/events
       allow_insecure_http: true
       authorization_env: WRITERELAY_WEBHOOK_AUTHORIZATION
+monitoring:
+  listen: 0.0.0.0:9090
+  sample_interval: 1s
 logging:
   level: info
   format: text

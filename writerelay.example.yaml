@@ -36,6 +36,11 @@ delivery:
 #      authorization_env: WRITERELAY_WEBHOOK_AUTHORIZATION
 #      signing_secret_env: WRITERELAY_WEBHOOK_SIGNING_SECRET
 
+# Optional HTTP health and metrics listener. Disabled when listen is omitted.
+# monitoring:
+#   listen: 127.0.0.1:9090
+#   sample_interval: 15s
+
 logging:
   level: info
   format: text

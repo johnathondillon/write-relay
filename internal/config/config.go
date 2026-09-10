@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/netip"
 	"net/url"
 	"os"
 	"regexp"
@@ -22,11 +23,12 @@ const (
 var identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 type Config struct {
-	Version  int            `yaml:"version"`
-	Postgres PostgresConfig `yaml:"postgres"`
-	Spool    SpoolConfig    `yaml:"spool"`
-	Delivery DeliveryConfig `yaml:"delivery"`
-	Logging  LoggingConfig  `yaml:"logging"`
+	Version    int              `yaml:"version"`
+	Postgres   PostgresConfig   `yaml:"postgres"`
+	Spool      SpoolConfig      `yaml:"spool"`
+	Delivery   DeliveryConfig   `yaml:"delivery"`
+	Monitoring MonitoringConfig `yaml:"monitoring"`
+	Logging    LoggingConfig    `yaml:"logging"`
 }
 
 type PostgresConfig struct {
@@ -73,6 +75,12 @@ type SinkConfig struct {
 	AllowInsecureHTTP bool   `yaml:"allow_insecure_http"`
 }
 
+type MonitoringConfig struct {
+	Listen              string        `yaml:"listen"`
+	SampleInterval      time.Duration `yaml:"-"`
+	SampleIntervalValue string        `yaml:"sample_interval"`
+}
+
 type LoggingConfig struct {
 	Level  string `yaml:"level"`
 	Format string `yaml:"format"`
@@ -106,6 +114,20 @@ func Decode(r io.Reader) (Config, error) {
 }
 
 func (c *Config) setDefaultsAndValidate() error {
+	if c.Monitoring.Listen != "" {
+		address, err := netip.ParseAddrPort(c.Monitoring.Listen)
+		if err != nil || address.Port() == 0 {
+			return errors.New("monitoring.listen must be an IP address and port between 1 and 65535 (for example 127.0.0.1:9090)")
+		}
+	}
+	if c.Monitoring.SampleIntervalValue == "" {
+		c.Monitoring.SampleIntervalValue = "15s"
+	}
+	var monitoringErr error
+	c.Monitoring.SampleInterval, monitoringErr = boundedDuration("monitoring.sample_interval", c.Monitoring.SampleIntervalValue, time.Second, 5*time.Minute)
+	if monitoringErr != nil {
+		return monitoringErr
+	}
 	if c.Version != CurrentVersion {
 		return fmt.Errorf("configuration version must be %d", CurrentVersion)
 	}

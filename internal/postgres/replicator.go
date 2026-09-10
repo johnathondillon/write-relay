@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pglogrepl"
@@ -18,10 +19,25 @@ import (
 )
 
 type Replicator struct {
-	cfg    config.Config
-	spool  spool.Spool
-	logger *slog.Logger
-	hooks  failure.Hooks
+	cfg          config.Config
+	spool        spool.Spool
+	logger       *slog.Logger
+	hooks        failure.Hooks
+	connected    atomic.Bool
+	transactions atomic.Uint64
+	lastCapture  atomic.Int64
+}
+
+// CaptureStatus reports observed replication state, not a probe of PostgreSQL.
+type CaptureStatus struct {
+	Connected       bool
+	Transactions    uint64
+	LastCaptureUnix int64
+}
+
+// Status is safe to call concurrently with Run. Counters reset with this instance.
+func (r *Replicator) Status() CaptureStatus {
+	return CaptureStatus{Connected: r.connected.Load(), Transactions: r.transactions.Load(), LastCaptureUnix: r.lastCapture.Load()}
 }
 
 func NewReplicator(cfg config.Config, durableSpool spool.Spool, logger *slog.Logger) *Replicator {
@@ -112,6 +128,9 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 		r.logger,
 	)
 
+	r.connected.Store(true)
+	defer r.connected.Store(false)
+
 	for {
 		receiveCtx, cancel := context.WithTimeout(ctx, r.cfg.Postgres.StatusInterval)
 		message, receiveErr := connection.ReceiveMessage(receiveCtx)
@@ -172,6 +191,8 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 				return err
 			}
 			durableLSN = result.DurableLSN
+			r.lastCapture.Store(time.Now().Unix())
+			r.transactions.Add(1)
 			r.logger.Info("committed transaction captured",
 				"transaction_id", batch.TransactionID,
 				"events", len(batch.Events),

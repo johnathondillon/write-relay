@@ -52,7 +52,9 @@ single delivery worker
 - `internal/spool/sqlite` owns embedded migrations, SQLite durability, identity
   replay checks, checkpoints, sink registration, delivery state, inspection,
   and redrive.
-- `internal/app` composes the capture and delivery lifecycles over one spool.
+- `internal/monitoring` serves optional HTTP health checks and cached spool
+  metrics, sampling through an independent read-only connection.
+- `internal/app` composes capture, delivery, and monitoring lifecycles over one spool.
 - `internal/cli` composes commands without a large CLI framework.
 - `sql/postgres` is both the administrator-facing SQL asset and the embedded
   source used by `setup`.
@@ -178,6 +180,16 @@ recovery. After recording `delivered`, WriteRelay does not monitor downstream
 processing or retry that delivery. See the [FAQ](faq.md) for application examples.
 
 ## Operational behavior
+
+The optional monitoring listener serves `/healthz`, `/readyz`, and `/metrics`.
+Capture exposes atomic observations of stream startup/exit and successfully
+persisted batches whose standby status updates were sent. These observations
+never control capture or delivery. Readiness requires observed streaming and a
+fresh successful spool sample; receiver failures are visible in delivery gauges.
+A background sampler uses the existing read-only stats API with a deadline;
+HTTP handlers only read its cache. Failed/stale samples suppress spool metrics
+and fail readiness. The app cancels and joins all components before closing the
+spool. See the [monitoring guide](monitoring.md) for precise signal limits.
 
 `spool stats` opens an existing SQLite spool using `mode=ro` and reads the
 checkpoint, event count, and per-sink delivery aggregates in one read transaction.

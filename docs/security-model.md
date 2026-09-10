@@ -54,6 +54,20 @@ The setup command interpolates only slot/publication identifiers that passed the
 strict lowercase PostgreSQL identifier rule. It never interpolates a secret and
 never drops or recreates an existing slot.
 
+## Monitoring listener
+
+HTTP monitoring is disabled unless `monitoring.listen` is configured. Its GET
+endpoints expose process/connection state, counts, timestamps, file lengths,
+and sink names. They omit event identities, payloads, checkpoint LSNs, URLs,
+credentials, and error details. No administrative or failure-injection operations
+are exposed. The listener has bounded HTTP timeouts and header size, but no TLS
+or authentication. Bind it to loopback or a trusted private monitoring network.
+
+Metrics requests read a cached snapshot. A single background read-only sampler
+has a five-second context deadline and configurable interval; aggregation cost
+grows with retained history. Sampling failure makes readiness false and omits
+spool counts without interrupting capture or delivery.
+
 ## Denial-of-service controls
 
 Both SQL and Go enforce the 256 KiB event limit. The daemon additionally bounds

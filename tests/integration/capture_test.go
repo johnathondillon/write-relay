@@ -168,7 +168,7 @@ func TestTransactionalCapture(t *testing.T) {
 	if err := store.ConfigureSinks(ctx, []delivery.SinkRegistration{registration}); err != nil {
 		t.Fatal(err)
 	}
-	stopAndWait := startRuntime(t, cfg, store, webhookSender, logger)
+	stopAndWait, replicator := startRuntime(t, cfg, store, webhookSender, logger)
 
 	committedID := "evt-committed-" + suffix
 	inTransaction(t, ctx, admin, "ord-committed-"+suffix, true,
@@ -253,8 +253,27 @@ func TestTransactionalCapture(t *testing.T) {
 	}
 	waitForConfirmedLSN(t, ctx, admin, slot, durable)
 
+	// Terminate only this test's replication connection. Observation must report
+	// disconnected during backoff and become connected again after streaming starts.
+	waitForCaptureConnection(t, replicator, true)
+	beforeStatus := replicator.Status()
+	if beforeStatus.Transactions == 0 || beforeStatus.LastCaptureUnix == 0 {
+		t.Fatalf("missing capture progress: %+v", beforeStatus)
+	}
+	var terminated bool
+	if err := admin.QueryRow(ctx, `SELECT pg_terminate_backend(active_pid) FROM pg_replication_slots WHERE slot_name=$1`, slot).Scan(&terminated); err != nil || !terminated {
+		t.Fatalf("terminate test replication connection: %v, %v", terminated, err)
+	}
+	waitForCaptureConnection(t, replicator, false)
+	waitForCaptureConnection(t, replicator, true)
+	t.Log("capture status followed stream disconnect and reconnect")
+
 	if err := stopAndWait(); err != nil {
 		t.Fatalf("runtime shutdown: %v", err)
+	}
+
+	if replicator.Status().Connected {
+		t.Fatal("capture still connected after shutdown")
 	}
 
 	// Reopen the real spool, then catch up with transactions committed offline.
@@ -291,7 +310,7 @@ func TestTransactionalCapture(t *testing.T) {
 		eventJSON(committedID, "order.paid"),
 		eventJSON(offlineID, "order.offline"),
 	})
-	stopRestart := startRuntime(t, cfg, store, webhookSender, logger)
+	stopRestart, _ := startRuntime(t, cfg, store, webhookSender, logger)
 	waitForID(t, ctx, store, offlineID)
 	waitForDelivered(t, ctx, store, offlineID, 1)
 	afterCheckpoint, err := store.LastDurableLSN(ctx)
@@ -340,7 +359,32 @@ func TestTransactionalCapture(t *testing.T) {
 	if replayedAttempts != 1 {
 		t.Fatalf("already-delivered identity was sent again: attempts=%d", replayedAttempts)
 	}
-	t.Log("verified commit, rollback, ordering, retry, ACK, restart, offline capture, and identical identity replay")
+	// Pruning must retain identities even when replay comes through PostgreSQL.
+	pruned, err := sqlitespool.Prune(ctx, cfg.Spool.Path, sqlitespool.PruneOptions{Before: time.Now().UTC(), Limit: 1000})
+	if err != nil || pruned.Events != len(afterEvents) {
+		t.Fatalf("prune delivered payloads: events=%d err=%v", pruned.Events, err)
+	}
+	afterPruneID := "evt-after-prune-" + suffix
+	inTransaction(t, ctx, admin, "ord-after-prune-"+suffix, true, []string{
+		eventJSON(committedID, "order.paid"),
+		eventJSON(afterPruneID, "order.after-prune"),
+	})
+	stopAfterPrune, _ := startRuntime(t, cfg, store, webhookSender, logger)
+	waitForDelivered(t, ctx, store, afterPruneID, 1)
+	if err := stopAfterPrune(); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := sqlitespool.ReadStats(ctx, cfg.Spool.Path)
+	if err != nil || stats.PrunedPayloads != int64(len(afterEvents)) || stats.EventCount != int64(len(afterEvents)+1) {
+		t.Fatalf("pruned identity replay changed payload/identity counts: %+v err=%v", stats, err)
+	}
+	webhookMu.Lock()
+	prunedReplayAttempts := webhookAttempts[committedID]
+	webhookMu.Unlock()
+	if prunedReplayAttempts != 1 {
+		t.Fatalf("pruned identity redelivered: attempts=%d", prunedReplayAttempts)
+	}
+	t.Log("verified commit, rollback, ordering, retry, ACK, restart, offline capture, identity replay, and payload pruning")
 }
 
 func startRuntime(
@@ -349,12 +393,16 @@ func startRuntime(
 	store *sqlitespool.Store,
 	sender delivery.Sink,
 	logger *slog.Logger,
-) func() error {
+) (func() error, *commitpostgres.Replicator) {
 	t.Helper()
 	runCtx, stopRun := context.WithCancel(context.Background())
 	runDone := make(chan error, 2)
+	replicator := commitpostgres.NewReplicator(cfg, store, logger)
+	if replicator.Status().Connected {
+		t.Fatal("replicator ready before startup")
+	}
 	go func() {
-		runDone <- commitpostgres.NewReplicator(cfg, store, logger).Run(runCtx)
+		runDone <- replicator.Run(runCtx)
 	}()
 	go func() {
 		worker := delivery.NewWorker(
@@ -387,7 +435,7 @@ func startRuntime(
 			t.Errorf("runtime cleanup: %v", err)
 		}
 	})
-	return stopAndWait
+	return stopAndWait, replicator
 }
 
 func waitForWebhookAttempts(
@@ -534,4 +582,16 @@ func findEvent(rows []sqlitespool.EventRow, id string) *sqlitespool.EventRow {
 		}
 	}
 	return nil
+}
+
+func waitForCaptureConnection(t *testing.T, replicator *commitpostgres.Replicator, connected bool) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if replicator.Status().Connected == connected {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("capture connection did not become %v: %+v", connected, replicator.Status())
 }
