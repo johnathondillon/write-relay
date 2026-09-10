@@ -26,7 +26,7 @@ import (
 var migrations embed.FS
 
 const (
-	currentSchemaVersion = 2
+	currentSchemaVersion = 3
 	durableLSNKey        = "last_durable_lsn"
 	timestampFormat      = "2006-01-02T15:04:05.000000000Z07:00"
 )
@@ -38,18 +38,19 @@ type Store struct {
 }
 
 type EventRow struct {
-	Sequence      int64
-	Source        string
-	ID            string
-	Type          string
-	Subject       string
-	Payload       []byte
-	TransactionID uint32
-	MessageLSN    string
-	CommitLSN     string
-	CommitEndLSN  string
-	CommitTime    time.Time
-	MessageIndex  int
+	Sequence        int64
+	Source          string
+	ID              string
+	Type            string
+	Subject         string
+	Payload         []byte
+	TransactionID   uint32
+	MessageLSN      string
+	CommitLSN       string
+	CommitEndLSN    string
+	CommitTime      time.Time
+	MessageIndex    int
+	PayloadPrunedAt *time.Time
 }
 
 type DeliveryRow struct {
@@ -313,9 +314,11 @@ func ensureDeliveriesForEvent(ctx context.Context, tx *sql.Tx, sequence int64) e
 		INSERT INTO deliveries(event_sequence, sink_id, state, attempts, next_attempt_at)
 		SELECT ?, sink_id, 'pending', 0, ?
 		FROM delivery_sinks
-		WHERE active = 1
+		WHERE active = 1 AND EXISTS (
+		    SELECT 1 FROM events WHERE sequence = ? AND payload_pruned_at IS NULL
+		)
 		ON CONFLICT(event_sequence, sink_id) DO NOTHING
-	`, sequence, formatTimestamp(time.Now()))
+	`, sequence, formatTimestamp(time.Now()), sequence)
 	if err != nil {
 		return fmt.Errorf("%w: create delivery records for event %d: %v", spool.ErrDurability, sequence, err)
 	}
@@ -410,7 +413,7 @@ func (s *Store) ConfigureSinks(ctx context.Context, registrations []delivery.Sin
 
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO deliveries(event_sequence, sink_id, state, attempts, next_attempt_at)
-			SELECT sequence, ?, 'pending', 0, ? FROM events WHERE 1
+			SELECT sequence, ?, 'pending', 0, ? FROM events WHERE payload_pruned_at IS NULL
 			ON CONFLICT(event_sequence, sink_id) DO NOTHING
 		`, sinkID, now); err != nil {
 			return fmt.Errorf("%w: backfill sink %q: %v", spool.ErrDurability, registration.Name, err)
@@ -582,7 +585,8 @@ func (s *Store) ListEvents(ctx context.Context, limit int) ([]EventRow, error) {
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT sequence, event_source, event_id, event_type, COALESCE(subject, ''), payload,
-		       transaction_id, message_lsn, commit_lsn, commit_end_lsn, commit_time, message_index
+		       transaction_id, message_lsn, commit_lsn, commit_end_lsn, commit_time, message_index,
+		       payload_pruned_at
 		FROM events ORDER BY sequence LIMIT ?
 	`, limit)
 	if err != nil {
@@ -595,14 +599,22 @@ func (s *Store) ListEvents(ctx context.Context, limit int) ([]EventRow, error) {
 		var row EventRow
 		var transactionID int64
 		var commitTime string
+		var prunedAt sql.NullString
 		if err := rows.Scan(
 			&row.Sequence, &row.Source, &row.ID, &row.Type, &row.Subject, &row.Payload,
 			&transactionID, &row.MessageLSN, &row.CommitLSN, &row.CommitEndLSN,
-			&commitTime, &row.MessageIndex,
+			&commitTime, &row.MessageIndex, &prunedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan spool event: %w", err)
 		}
 		row.TransactionID = uint32(transactionID)
+		row.PayloadPrunedAt, err = nullableTime(prunedAt)
+		if err != nil {
+			return nil, fmt.Errorf("parse payload pruning time: %w", err)
+		}
+		if row.PayloadPrunedAt != nil {
+			row.Payload = nil
+		}
 		row.CommitTime, err = time.Parse(time.RFC3339Nano, commitTime)
 		if err != nil {
 			return nil, fmt.Errorf("parse event commit time: %w", err)

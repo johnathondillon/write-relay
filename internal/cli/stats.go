@@ -43,6 +43,7 @@ func writeStatsSummary(stdout io.Writer, stats sqlitespool.Stats) error {
 	var output bytes.Buffer
 	fmt.Fprintf(&output, "Spool snapshot: %s\n", stats.SampledAt.Format(time.RFC3339))
 	fmt.Fprintf(&output, "Captured events: %d\n", stats.EventCount)
+	fmt.Fprintf(&output, "Payloads: %d retained | %d pruned\n", stats.EventCount-stats.PrunedPayloads, stats.PrunedPayloads)
 	fmt.Fprintf(&output, "Durable checkpoint: %s\n", stats.LastDurableLSN)
 	fmt.Fprintf(&output, "Deliveries: %d total | %d pending | %d retry_wait | %d delivered | %d dead_letter\n",
 		stats.Deliveries.Total, stats.Deliveries.Pending, stats.Deliveries.RetryWait,

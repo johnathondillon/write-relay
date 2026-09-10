@@ -13,9 +13,11 @@ import (
 
 func spoolCommand(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: writerelayd spool <stats|list|deliveries|redrive> [options]")
+		return fmt.Errorf("usage: writerelayd spool <stats|list|deliveries|redrive|prune> [options]")
 	}
 	switch args[0] {
+	case "prune":
+		return spoolPruneCommand(ctx, args[1:], stdout, stderr)
 	case "stats":
 		return spoolStatsCommand(ctx, args[1:], stdout, stderr)
 	case "list":
@@ -51,19 +53,21 @@ func spoolListCommand(ctx context.Context, args []string, stdout, stderr io.Writ
 	encoder.SetEscapeHTML(false)
 	for _, row := range rows {
 		output := struct {
-			Sequence      int64           `json:"sequence"`
-			Source        string          `json:"source"`
-			ID            string          `json:"id"`
-			Type          string          `json:"type"`
-			Subject       string          `json:"subject,omitempty"`
-			Payload       json.RawMessage `json:"payload"`
-			TransactionID uint32          `json:"transaction_id"`
-			MessageIndex  int             `json:"message_index"`
-			CommitEndLSN  string          `json:"commit_end_lsn"`
+			Sequence        int64           `json:"sequence"`
+			Source          string          `json:"source"`
+			ID              string          `json:"id"`
+			Type            string          `json:"type"`
+			Subject         string          `json:"subject,omitempty"`
+			Payload         json.RawMessage `json:"payload"`
+			PayloadPrunedAt *time.Time      `json:"payload_pruned_at,omitempty"`
+			TransactionID   uint32          `json:"transaction_id"`
+			MessageIndex    int             `json:"message_index"`
+			CommitEndLSN    string          `json:"commit_end_lsn"`
 		}{
 			Sequence: row.Sequence, Source: row.Source, ID: row.ID, Type: row.Type,
 			Subject: row.Subject, Payload: row.Payload, TransactionID: row.TransactionID,
-			MessageIndex: row.MessageIndex, CommitEndLSN: row.CommitEndLSN,
+			PayloadPrunedAt: row.PayloadPrunedAt,
+			MessageIndex:    row.MessageIndex, CommitEndLSN: row.CommitEndLSN,
 		}
 		if err := encoder.Encode(output); err != nil {
 			return fmt.Errorf("write spool row: %w", err)

@@ -7,6 +7,9 @@ event and delivery rows commit in the same SQLite transaction. Registering a new
 sink backfills existing events in one transaction. Sink name is durable identity;
 changing its type or non-secret target requires a new name.
 
+ADR 0007 later narrows backfill to events with retained payloads and adds manual
+payload-only retention. Event identity and all delivery rows remain retained.
+
 Delivery states are `pending`, `retry_wait`, `delivered`, and `dead_letter`.
 `delivered` and `dead_letter` are retained terminal states. Removing a sink with
 non-terminal deliveries is rejected, and event deletion remains out of scope

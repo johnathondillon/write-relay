@@ -69,8 +69,8 @@ replay; different content for the same identity stops capture.
 ## How delivery works
 
 1. On startup, the daemon registers each configured sink in SQLite. A new sink
-   receives pending records for existing events; changing a sink's type or
-   target requires a new sink name.
+   receives pending records for existing events with retained payloads; changing
+   a sink's type or target requires a new sink name.
 2. New event rows and their active-sink delivery rows commit in the same SQLite
    transaction.
 3. One worker selects the oldest non-terminal event independently for each sink.
@@ -236,8 +236,9 @@ go run ./cmd/writerelayd spool stats --config ./writerelay.yaml
 go run ./cmd/writerelayd spool stats --config ./writerelay.yaml --json
 ```
 
-`stats` reports the captured event count, durable checkpoint, delivery counts
-by state and sink, oldest waiting age, and database/WAL/SHM file sizes. It reads
+`stats` reports captured identity and pruned-payload counts, the durable
+checkpoint, delivery counts by state and sink, oldest waiting age, and
+database/WAL/SHM file sizes. It reads
 an existing spool without creating or migrating it and requires no PostgreSQL
 connection or resolved sink secrets. For the Nuxt example, use the
 [Docker stats commands](examples/nuxt-lms/README.md#watch-the-relays-delivery-counts).
@@ -249,6 +250,21 @@ an event sent to multiple sinks contributes multiple delivery records. File
 sizes are approximate file lengths, including SQLite's WAL, not PostgreSQL's
 retained WAL or filesystem allocated space. A successful snapshot does not
 establish that the daemon is running or a destination is healthy.
+
+Preview cleanup of old, successfully delivered payloads:
+
+```bash
+go run ./cmd/writerelayd spool prune --config ./writerelay.yaml \
+  --before 2026-09-01T00:00:00Z --limit 100 --dry-run
+```
+
+Remove `--dry-run` to apply. Every associated delivery must have succeeded before
+the cutoff; pending work, retries, dead letters, and capture-only events remain
+intact. Identity/digest and delivery history are retained for replay protection.
+Pruned payloads cannot be backfilled to a new sink. Freed space is reusable by
+SQLite; the file does not automatically shrink. This requires schema 3: stop the
+old daemon and restart the updated binary to migrate before pruning. See the
+[retention guide](docs/retention.md) for batch limits, upgrade and disk behavior.
 
 Inspect individual delivery records:
 
