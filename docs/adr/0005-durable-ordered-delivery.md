@@ -20,6 +20,15 @@ for each sink: a pending or delayed earlier event blocks later events for that
 sink without blocking other sinks. A terminal dead letter allows later events
 to proceed and can be explicitly redriven.
 
+Delivery selection first finds the oldest non-terminal event for each active
+sink using the existing sink/sequence index, then checks whether that event is
+due. Eligible heads are ordered by event sequence and sink ID. This replaces a
+predecessor check repeated for every due backlog row, which caused a 10,000-event
+load/recovery run to exceed its five-minute deadline. Selecting only due rows
+inside the per-sink lookup would incorrectly bypass delayed retries. No schema,
+durability, or state-transition change is needed. Retained terminal history can
+still require scanning within a sink; this is not a constant-time queue claim.
+
 There is no durable `in_flight` state. The worker sends while the row remains
 non-terminal and marks the result afterward. If a process crashes after a
 destination accepts the request but before SQLite records success, the same row

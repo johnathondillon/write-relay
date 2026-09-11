@@ -33,5 +33,7 @@ coverage.out
 sdk/typescript/dist
 sdk/typescript/*.tgz
 
+# Generated load-test reports
+/artifacts/
 # Local release packages and saved Docker images
 /dist/

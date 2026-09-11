@@ -477,22 +477,26 @@ func (s *Store) ConfigureSinks(ctx context.Context, registrations []delivery.Sin
 
 func (s *Store) NextDueDelivery(ctx context.Context, now time.Time) (delivery.Delivery, bool, error) {
 	var item delivery.Delivery
+	// Select each sink's oldest non-terminal row before considering its retry
+	// time. Checking predecessors for every due row repeats that work across the
+	// entire backlog; checking due time inside the subquery would skip blocked
+	// heads and violate per-sink ordering.
 	err := s.db.QueryRowContext(ctx, `
 		SELECT e.sequence, s.sink_id, s.sink_name, s.sink_type,
 		       e.event_source, e.event_id, e.event_type, COALESCE(e.subject, ''),
 		       e.payload, d.attempts
-		FROM deliveries d
-		JOIN delivery_sinks s ON s.sink_id = d.sink_id
+		FROM delivery_sinks s
+		JOIN deliveries d ON d.sink_id = s.sink_id
+		  AND d.event_sequence = (
+		      SELECT head.event_sequence FROM deliveries head
+		      WHERE head.sink_id = s.sink_id
+		        AND head.state IN ('pending', 'retry_wait')
+		      ORDER BY head.event_sequence
+		      LIMIT 1
+		  )
 		JOIN events e ON e.sequence = d.event_sequence
 		WHERE s.active = 1
-		  AND d.state IN ('pending', 'retry_wait')
 		  AND d.next_attempt_at <= ?
-		  AND NOT EXISTS (
-		      SELECT 1 FROM deliveries earlier
-		      WHERE earlier.sink_id = d.sink_id
-		        AND earlier.event_sequence < d.event_sequence
-		        AND earlier.state IN ('pending', 'retry_wait')
-		  )
 		ORDER BY e.sequence, s.sink_id
 		LIMIT 1
 	`, formatTimestamp(now)).Scan(
