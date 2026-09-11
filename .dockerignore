@@ -32,3 +32,6 @@ coverage.out
 **/.output
 sdk/typescript/dist
 sdk/typescript/*.tgz
+
+# Local release packages and saved Docker images
+/dist/
