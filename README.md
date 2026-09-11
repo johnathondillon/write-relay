@@ -46,11 +46,14 @@ The current implementation targets PostgreSQL 14–18. The CI integration matrix
 tests every declared major version using official PostgreSQL Docker images.
 Managed-service compatibility remains unverified.
 
-Milestone 4 has started with an unpublished
+Milestone 4 includes an unpublished
 [TypeScript/Node producer SDK](sdk/typescript/README.md), used by the
-[Nuxt LMS example](examples/nuxt-lms/README.md). It validates and emits events
-through the application's existing PostgreSQL transaction client. SQL-only
-integration remains supported.
+[Nuxt LMS example](examples/nuxt-lms/README.md), and a
+[Go producer SDK](sdk/go/README.md) for pgx v5 and `database/sql` transactions.
+Both validate and emit events through the application's existing PostgreSQL
+transaction. Try the [Go command-line example](examples/go-producer/README.md)
+for commit, rollback, and unchanged-event replay. SQL-only integration remains
+supported.
 
 ## How capture works
 
