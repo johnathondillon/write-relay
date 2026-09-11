@@ -21,6 +21,7 @@ jobs:
         with:
           persist-credentials: false
       - run: docker compose up --build --wait --wait-timeout 120
+      - run: docker compose exec -T certificate node --test certificate/inbox.integration.test.ts
       - run: docker compose run --rm --no-deps verify
       - if: failure()
         run: docker compose logs --no-color

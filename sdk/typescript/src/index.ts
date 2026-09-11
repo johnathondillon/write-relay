@@ -1,3 +1,17 @@
+export {
+  withInbox,
+  inboxTableSQL,
+  InboxConflictError,
+  InboxTransactionError,
+  type InboxPool,
+  type InboxClient,
+  type InboxTransaction,
+  type InboxQueryResult,
+  type InboxDelivery,
+  type InboxTable,
+  type InboxResult,
+} from "./inbox.js";
+
 export type JsonValue =
   | null
   | boolean

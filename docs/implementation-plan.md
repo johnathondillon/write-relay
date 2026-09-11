@@ -154,11 +154,30 @@ This section records only commands actually executed in this workspace.
   data, envelope validation, and a runnable local producer example.
 - [x] Go SDK unit tests and PostgreSQL integration coverage for commit,
   rollback, validation/database errors, and unchanged-identity replay.
-- [ ] C# SDK, full CloudEvents conformance coverage, and separate
-  consumer inbox helpers.
+- [x] TypeScript receiver inbox helper with atomic business writes, duplicate
+  detection, content conflicts, and concurrent commit/rollback tests. The Nuxt
+  certificate service uses it with its existing inbox records.
+- [ ] C# SDK, full CloudEvents conformance coverage, and receiver helpers for
+  other languages.
 
 The TypeScript package remains unpublished. Automatic retention and a hard
 spool-size policy remain later work.
+
+### TypeScript receiver verification
+
+- On 2026-09-11, all 15 SDK tests passed, including declaration checks and a
+  standalone tarball consumer using both producer and receiver exports.
+- The Docker Nuxt build passed SDK tests, service type checks, and the production
+  build. Five receiver integration tests passed against PostgreSQL 18.4, including
+  concurrent commit/rollback, conflicting content, and a swallowed SQL error.
+- The complete LMS verifier passed concurrent producer requests, rollback,
+  outage recovery and monitoring, and a lost response followed by a duplicate
+  delivery with one certificate. These checks ran in a disposable stack.
+- `make check`, `make failure`, and `make vuln` passed. The new receiver helper
+  has not yet been exercised against the full PostgreSQL 14–18 matrix.
+- CI now runs the receiver integration tests before the existing LMS verifier.
+  See the [receiver guide](../sdk/typescript/INBOX.md) and ADR 0009 for setup and
+  transaction boundaries.
 
 ### Go SDK verification
 

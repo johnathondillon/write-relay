@@ -294,8 +294,11 @@ container, so their database operations are unavailable while it is stopped.
   on the same client, and commit. The SDK executes
   `SELECT writerelay.emit($1::jsonb)`. A client-supplied UUID
   makes retries of an ambiguous producer HTTP request safe as well.
-- [Receiver transaction](certificate/server.ts): authenticate, validate, insert
-  the inbox key and certificate together, and only then return success.
+- [Receiver transaction](certificate/server.ts): authenticate, validate, use
+  [`withInbox`](../../sdk/typescript/INBOX.md) to commit the inbox key and
+  certificate together, and only then return success. The helper uses the
+  existing `public.inbox` table, preserving previously processed keys. Duplicate
+  observations are separate audit writes after the helper skips completed work.
 - [Database setup](sql/002_example.sql): separate roles, databases, and tables.
 - [Relay settings](relay.yaml): one HTTP sink and a short demo retry policy.
 - [Nuxt page](app/app.vue): displays saved completions and receiver observations.
@@ -322,7 +325,20 @@ This adds labeled test completions and checks concurrent producer requests,
 rollback absence after a later delivered event, automatic outage recovery,
 retry metrics while capture stays ready, and duplicate handling after a lost
 response. Avoid using the UI's failure
-controls while verification is running. For Node development (Node 22.18+),
+controls while verification is running.
+
+To check the receiver helper directly against PostgreSQL:
+
+```bash
+docker compose exec -T certificate node --test certificate/inbox.integration.test.ts
+```
+
+These tests create and drop uniquely named tables; they do not alter the
+example's inbox or certificates. They verify rollback, conflicting content, and
+concurrent attempts waiting for the first transaction to commit or roll back.
+CI runs both commands after building the stack.
+
+For Node development (Node 22.18+),
 build the local SDK first. Starting in `examples/nuxt-lms`:
 
 ```bash
