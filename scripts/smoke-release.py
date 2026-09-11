@@ -18,6 +18,27 @@ def run(command, **kwargs):
                           timeout=20, **kwargs)
 
 
+def wait_for_startup(read_logs, exited, timeout=15):
+    """Observe startup without opening SQLite while it switches to WAL mode."""
+    deadline = time.monotonic() + timeout
+    while True:
+        if exited():
+            raise RuntimeError("Packaged daemon exited before completing startup")
+        for line in read_logs().splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # A concurrently written final log line may be partial.
+            # This smoke test deliberately points at an unavailable PostgreSQL.
+            # app.Run opens/migrates the spool and configures sinks before it
+            # starts the replication loop that emits this message.
+            if isinstance(record, dict) and record.get("msg") == "replication connection interrupted; reconnecting":
+                return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Timed out waiting for packaged daemon startup")
+        time.sleep(0.1)
+
+
 def smoke(args, directory):
     container = None
     process = None
@@ -50,6 +71,9 @@ spool:
   path: {json.dumps(spool_path)}
 delivery:
   sinks: []
+logging:
+  level: warn
+  format: json
 """)
     config.chmod(0o644)
     try:
@@ -69,19 +93,23 @@ delivery:
             with logfile.open("w") as log:
                 process = subprocess.Popen(command + ["run", "--config", config_arg],
                                            stdout=log, stderr=log)
-        deadline = time.monotonic() + 15
-        while True:
-            result = subprocess.run(command + ["spool", "stats", "--config", config_arg, "--json"],
-                                    text=True, capture_output=True, timeout=5)
-            if result.returncode == 0:
-                stats = json.loads(result.stdout)
-                assert stats["event_count"] == 0, stats
-                assert stats["deliveries"]["total"] == 0, stats
-                assert stats["last_durable_lsn"] == "0/0", stats
-                break
-            if time.monotonic() >= deadline or (process and process.poll() is not None):
-                raise RuntimeError("Packaged daemon could not initialize/read SQLite: " + result.stderr)
-            time.sleep(0.2)
+        if container:
+            def read_logs():
+                logs = run(["docker", "logs", container])
+                return logs.stdout + logs.stderr
+
+            def exited():
+                state = run(["docker", "inspect", "--format", "{{.State.Running}}", container])
+                return state.stdout.strip() != "true"
+        else:
+            read_logs = lambda: logfile.read_text()
+            exited = lambda: process.poll() is not None
+        wait_for_startup(read_logs, exited)
+        result = run(command + ["spool", "stats", "--config", config_arg, "--json"])
+        stats = json.loads(result.stdout)
+        assert stats["event_count"] == 0, stats
+        assert stats["deliveries"]["total"] == 0, stats
+        assert stats["last_durable_lsn"] == "0/0", stats
         if container:
             run(["docker", "stop", "--time", "5", container])
             result = run(["docker", "inspect", "--format", "{{.State.ExitCode}}", container])
