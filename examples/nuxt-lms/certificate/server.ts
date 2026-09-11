@@ -3,8 +3,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import pg from "pg";
+import { withInbox, InboxConflictError } from "@writerelay/node";
 
 const database = new pg.Pool({
   connectionString: process.env.CERTIFICATE_DATABASE_URL,
@@ -114,46 +115,40 @@ async function handle(request: IncomingMessage, response: ServerResponse) {
 
   const dropResponse = mode === "drop-response";
   if (dropResponse) mode = "normal";
-  const digest = createHash("sha256").update(raw).digest("hex");
-  const client = await database.connect();
   let outcome = "issued";
   try {
-    await client.query("BEGIN");
-    // ON CONFLICT waits for a concurrent insert to commit or roll back.
-    const inserted = await client.query(
-      "INSERT INTO inbox (idempotency_key, payload_sha256) VALUES ($1, $2) ON CONFLICT DO NOTHING RETURNING idempotency_key",
-      [key, digest],
-    );
-    if (inserted.rowCount === 0) {
-      const previous = await client.query(
-        "SELECT payload_sha256 FROM inbox WHERE idempotency_key = $1",
-        [key],
-      );
-      if (previous.rows[0].payload_sha256 !== digest) {
-        await client.query("ROLLBACK");
-        return respond(response, 409, {
-          error: "Same key with different content",
-        });
-      }
-      outcome = "duplicate";
-    } else {
-      await client.query(
-        `INSERT INTO certificates (completion_id, certificate_id, learner, course_title)
+    // Keep the existing table and keys so upgrades preserve deduplication.
+    const result = await withInbox(
+      database,
+      { key, body: raw, table: "inbox" },
+      async (client) => {
+        await client.query(
+          `INSERT INTO certificates (completion_id, certificate_id, learner, course_title)
          VALUES ($1, $2, $3, $4)`,
-        [data.completionId, randomUUID(), data.learner, data.courseTitle],
+          [data.completionId, randomUUID(), data.learner, data.courseTitle],
+        );
+        await client.query(
+          "INSERT INTO receipts (completion_id, idempotency_key, outcome) VALUES ($1, $2, $3)",
+          [data.completionId, key, dropResponse ? "response-lost" : "issued"],
+        );
+      },
+    );
+    // withInbox has committed the key and certificate before returning.
+    if (result.status === "duplicate") {
+      outcome = "duplicate";
+      // Audit only: the committed inbox key already protects the business effect.
+      await database.query(
+        "INSERT INTO receipts (completion_id, idempotency_key, outcome) VALUES ($1, $2, $3)",
+        [data.completionId, key, outcome],
       );
     }
-    await client.query(
-      "INSERT INTO receipts (completion_id, idempotency_key, outcome) VALUES ($1, $2, $3)",
-      [data.completionId, key, dropResponse ? "response-lost" : outcome],
-    );
-    // The key and certificate become durable together, BEFORE success is sent.
-    await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (error instanceof InboxConflictError) {
+      return respond(response, 409, {
+        error: "Same key with different content",
+      });
+    }
     throw error;
-  } finally {
-    client.release();
   }
   if (dropResponse) {
     response.destroy();

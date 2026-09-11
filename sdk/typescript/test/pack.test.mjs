@@ -18,6 +18,7 @@ test("packed package imports in a standalone consumer without TypeScript or repo
     assert.ok(pack.files.some((file) => file.path === "dist/index.js"));
     assert.ok(pack.files.some((file) => file.path === "dist/index.d.ts"));
     assert.ok(pack.files.some((file) => file.path === "LICENSE"));
+    assert.ok(pack.files.some((file) => file.path === "INBOX.md"));
     assert.ok(
       !pack.files.some(
         (file) => file.path.startsWith("src/") || file.path.startsWith("test/"),
@@ -45,7 +46,7 @@ test("packed package imports in a standalone consumer without TypeScript or repo
         "-e",
         `
       import assert from 'node:assert/strict';
-      import { emit } from '@writerelay/node';
+      import { emit, withInbox, inboxTableSQL, InboxConflictError } from '@writerelay/node';
       let calls = 0;
       await emit({ async query(sql, [payload]) {
         calls++;
@@ -53,6 +54,18 @@ test("packed package imports in a standalone consumer without TypeScript or repo
         assert.equal(JSON.parse(payload).id, 'pack-test');
       } }, { id: 'pack-test', source: 'urn:test', type: 'test' });
       assert.equal(calls, 1);
+      assert.match(inboxTableSQL(), /CREATE TABLE "public"\."writerelay_inbox"/);
+      assert.ok(new InboxConflictError() instanceof Error);
+      let released = false;
+      const result = await withInbox({ async connect() { return {
+        async query(sql) {
+          if (sql.startsWith('INSERT')) return {command:'INSERT', rowCount:1, rows:[]};
+          return {command:sql === 'COMMIT' ? 'COMMIT' : 'BEGIN', rowCount:null, rows:[]};
+        },
+        release() { released = true; }
+      }; } }, {key:'a'.repeat(64), body:new TextEncoder().encode('{}')}, async () => 7);
+      assert.deepEqual(result, {status:'processed', value:7});
+      assert.equal(released, true);
     `,
       ],
       { cwd: directory, stdio: "pipe" },

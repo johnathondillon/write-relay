@@ -1,9 +1,14 @@
-# WriteRelay TypeScript producer SDK
+# WriteRelay TypeScript SDK
 
 `@writerelay/node` emits a WriteRelay event through your existing PostgreSQL
-transaction client. It has no runtime dependencies and works with the
+transaction client. Its receiver helper saves an inbox key and business writes
+in one PostgreSQL transaction, so repeated webhook attempts can skip completed
+work. It has no runtime dependencies and works with the
 promise-based `pg` client API. This initial package supports Node 22+ and ESM.
 It is kept private and has **not been published to npm**.
+
+For receiver setup, usage, retries, and retention, see the
+[receiver inbox guide](INBOX.md).
 
 The SDK currently builds with TypeScript 5.9.
 [Dependabot](../../.github/dependabot.yml) allows minor and patch compiler
@@ -40,7 +45,7 @@ npm install /absolute/path/to/write-relay/sdk/typescript/writerelay-node-0.1.0.t
 ```
 
 The tarball includes compiled JavaScript, TypeScript declarations, and the
-license. Install your database driver separately, for example `npm install pg`
+license and receiver inbox guide. Install your database driver separately, for example `npm install pg`
 and `npm install --save-dev @types/pg` for TypeScript applications.
 
 ## Emit inside your transaction
@@ -92,7 +97,7 @@ This follows [node-postgres's transaction requirements](https://node-postgres.co
 
 `emit` cannot verify that your client has an open transaction. If you call it
 outside one, PostgreSQL can commit the emission separately from your business
-write. The SDK never begins, commits, rolls back, releases a connection, or
+write. `emit` never begins, commits, rolls back, releases a connection, or
 retries a transaction for you. Always await it before committing, and roll back
 on validation or database errors. Catching an emission error and committing
 anyway can save a business change without its event.
@@ -138,14 +143,15 @@ content when retrying that event, including any timestamp. A new ID on every
 attempt defeats deduplication. Reusing an identity with different content
 stops WriteRelay capture.
 
-The SDK does not make application requests idempotent. If a connection fails
+`emit` does not make producer application requests idempotent. If a connection fails
 during `COMMIT`, the commit outcome may be unknown. Your application needs a
 unique request ID and a way to look up the existing result before retrying.
 The [LMS producer](../../examples/nuxt-lms/server/api/completions.post.ts)
 demonstrates this with a unique completion ID and conflict handling.
 
 WriteRelay retries retryable delivery failures after capture. The receiver must
-still handle duplicates using the stable webhook `Idempotency-Key`. The SDK
+still handle duplicates using the stable webhook `Idempotency-Key`. Use
+[`withInbox`](INBOX.md) to commit that key with receiver database changes. The SDK
 does not atomically commit a remote operation with PostgreSQL. See the
 [FAQ](../../docs/faq.md).
 
@@ -156,13 +162,16 @@ parameterized SQL directly without this package.
 
 `npm test` checks validation, SQL parameterization, database-error propagation,
 stable identities, TypeScript declarations, and installation of the packed
-package in a standalone consumer. No database is required for those tests.
+package in a standalone consumer. Receiver tests also check duplicate/conflict
+handling, rollback, commit errors, and connection cleanup. No database is required
+for those tests.
 
 The Nuxt example's Docker build runs these SDK tests and typechecks its real
 `pg` client integration. With the example running, execute:
 
 ```bash
 # From examples/nuxt-lms:
+docker compose exec -T certificate node --test certificate/inbox.integration.test.ts
 docker compose run --rm --no-deps verify
 ```
 
@@ -170,3 +179,7 @@ This exercises the SDK against PostgreSQL and the daemon: commit delivers,
 rollback leaves neither the business record nor a delivered event, concurrent
 producer requests stay idempotent, outages retry, and a lost response produces
 a duplicate with the same delivery key. CI runs this workflow on SDK changes.
+
+The receiver tests use disposable tables to verify atomic inbox/business writes,
+conflicts, and concurrent attempts waiting for commit or rollback. See the
+[inbox guide](INBOX.md#verify-the-behavior) for details and version evidence.
