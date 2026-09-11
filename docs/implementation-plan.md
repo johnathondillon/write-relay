@@ -150,11 +150,32 @@ This section records only commands actually executed in this workspace.
 - [x] Nuxt example uses the local SDK; CI exercises commit, rollback, producer
   retries, receiver outages, and duplicate delivery through it.
 - [x] SDK unit tests, declaration checks, and standalone tarball installation.
-- [ ] Go and C# SDKs, full CloudEvents conformance coverage, and separate
+- [x] Go producer SDK for pgx v5 and `database/sql` transactions, explicit JSON
+  data, envelope validation, and a runnable local producer example.
+- [x] Go SDK unit tests and PostgreSQL integration coverage for commit,
+  rollback, validation/database errors, and unchanged-identity replay.
+- [ ] C# SDK, full CloudEvents conformance coverage, and separate
   consumer inbox helpers.
 
 The TypeScript package remains unpublished. Automatic retention and a hard
 spool-size policy remain later work.
+
+### Go SDK verification
+
+- On 2026-09-10, `make check`, `make race`, `make failure`, and `make vuln`
+  passed with Go 1.26.8. A 10-second fuzz run of raw JSON validation passed.
+- `make integration-matrix` passed against PostgreSQL 14.24, 15.19, 16.15,
+  17.11, and 18.4, including both Go SDK transaction APIs.
+- A standalone consumer imported the SDK through the documented local module
+  replacement and compiled successfully.
+- The runnable Go producer's commit, rollback, marker, and unchanged-event
+  replay commands passed against a disposable PostgreSQL 18.4 instance and
+  real daemon. The example used the restricted development application role;
+  only the two committed identities reached the spool. Test resources were
+  removed afterward.
+- The Go package shares the repository module and has no separate SDK release.
+  See [ADR 0008](adr/0008-producer-sdk-transactions.md) and the
+  [Go SDK guide](../sdk/go/README.md).
 
 ## Manual payload retention
 
