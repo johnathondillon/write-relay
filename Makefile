@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration integration-version integration-matrix load
+.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration integration-version integration-matrix load package
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -58,3 +58,5 @@ integration-matrix: ## Run integration tests against PostgreSQL 14 through 18
 
 load: ## Run configurable load/outage/restart test (default 10000 events; disposable PostgreSQL)
 	bash scripts/load.sh
+package: ## Package a preview binary (VERSION=v0.1.0-preview.1; optional GOOS/GOARCH)
+	bash scripts/package-release.sh

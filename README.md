@@ -141,6 +141,16 @@ the same idempotency key may be sent more than once.
 Crash hooks are injected directly by tests. The production daemon has no
 configuration, environment variable, or endpoint that can activate them.
 
+## Preview packages
+
+The [release workflow](.github/workflows/release.yml) builds Linux and macOS
+binaries for amd64 and arm64, checksums, and versioned Linux Docker images.
+See the [installation guide](docs/installation.md) for published previews and
+the [release guide](docs/releases.md) to build and review packages locally.
+The sample versions in those guides are illustrative; downloads require a
+published preview on the [releases page](https://github.com/johnathondillon/write-relay/releases).
+WriteRelay remains an architectural preview.
+
 ## Local quick start
 
 For a browser-based walkthrough with no local Go or Node setup, run the
@@ -390,6 +400,8 @@ redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 - [Health checks and monitoring](docs/monitoring.md)
 - [Load and backlog recovery](docs/load-testing.md)
 - [Implementation plan](docs/implementation-plan.md)
+- [Preview installation](docs/installation.md)
+- [Release packaging and publication](docs/releases.md)
 - [ADRs](docs/adr)
 
 ## License

@@ -26,3 +26,5 @@ coverage.out
 
 # Generated load-test reports
 /artifacts/
+# Local release packages and saved Docker images
+/dist/
