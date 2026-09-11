@@ -26,6 +26,14 @@ SQLite spool, and stop the daemon gracefully. No PostgreSQL service is needed
 for this packaging smoke test. Linux jobs also build and exercise their native
 Docker image, including its non-root user and writable volume.
 
+The smoke test waits for the JSON replication-reconnect log before opening the
+spool for inspection. The deliberately unavailable PostgreSQL endpoint causes
+this message only after spool initialization and sink configuration finish.
+Polling SQLite earlier can race its switch to WAL mode and fail startup with
+`SQLITE_BUSY`. Startup remains bounded by a timeout, and early daemon exit fails
+the test. This signal proves startup reached the replication loop, not database
+connectivity or capture readiness.
+
 Before publication, separate jobs run Go formatting, module verification,
 build/unit/vet/race/crash-recovery/vulnerability checks and PostgreSQL 14–18
 integration tests. Publication depends on every packaging and release-check job
@@ -60,6 +68,7 @@ is not a reproducible-build guarantee.
 Verify and smoke-test an archive on its matching host (Python 3.12+):
 
 ```bash
+python3 -m unittest discover -s scripts -p 'test_smoke_release.py'
 (cd dist && shasum -a 256 -c *.sha256)
 python3 scripts/smoke-release.py \
   --archive dist/writerelay_v0.1.0-preview.1_darwin_arm64.tar.gz \
