@@ -32,3 +32,6 @@ coverage.out
 **/.output
 sdk/typescript/dist
 sdk/typescript/*.tgz
+
+# Generated load-test reports
+/artifacts/

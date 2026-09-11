@@ -351,6 +351,7 @@ make integration
 make postgres-down
 POSTGRES_VERSION=14 make integration-version
 make integration-matrix
+make load
 ```
 
 `make integration` uses the persistent PostgreSQL 18 development database.
@@ -360,6 +361,12 @@ The disposable runs use unique Compose projects and automatically assigned
 loopback ports, print the exact server version, and remove their containers
 and anonymous volumes on exit. They do not use the development or LMS volumes.
 Go and Docker Compose are required; the first run downloads database images.
+
+`make load` runs a disposable 10,000-event workload with a receiver outage,
+forced daemon restart, backlog recovery, and duplicate-delivery verification.
+It saves throughput, latency, recovery time, and spool-size observations to
+`artifacts/load/report.json`. See [load testing](docs/load-testing.md) for
+configuration, report definitions, and the smaller CI scenario.
 
 The [CI matrix](.github/workflows/ci.yml) runs the same disposable test command
 on pushes and pull requests, with an independent result for each major version.
@@ -381,6 +388,7 @@ redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 - [Correctness invariants](docs/correctness.md)
 - [Security model](docs/security-model.md)
 - [Health checks and monitoring](docs/monitoring.md)
+- [Load and backlog recovery](docs/load-testing.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [ADRs](docs/adr)
 

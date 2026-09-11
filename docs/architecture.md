@@ -163,6 +163,12 @@ retry blocks later events for that sink but does not block another sink.
 Dead-lettering is terminal for ordering, so later events can proceed while the
 failed record remains available for inspection and explicit redrive.
 
+The selection query finds the oldest non-terminal row per active sink before
+checking its due time, then chooses by event sequence and sink ID. This avoids
+repeating predecessor checks across every due backlog row while preserving
+delayed-retry blocking and independent sink progress. See
+[ADR 0005](adr/0005-durable-ordered-delivery.md).
+
 Sink name is durable identity. Its type and non-secret target fingerprint cannot
 change in place; operators use a new name for a new destination. Removing a
 sink with non-terminal deliveries is rejected. Re-enabling the same durable

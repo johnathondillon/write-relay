@@ -21,6 +21,13 @@ ports, verify the server major, and clean up their own containers and anonymous
 volumes on exit. They leave the persistent development and LMS databases alone.
 Each test logs the exact server version for compatibility evidence.
 
+CI also runs a bounded load/outage/restart scenario. Use `make load` for the
+default 10,000-event workload, or `LOAD_EVENTS=2000 make load` for the CI-sized
+run. See [load testing](docs/load-testing.md) for configuration and report
+definitions. The harness uses the `load` build tag and disposable Docker
+resources; performance measurements are informational, while correctness and
+timeouts determine whether the test passes.
+
 Unit tests must not require Docker. Integration tests use the `integration`
 build tag, temporary spool paths, unique slots/publications, bounded polling,
 and deterministic event identities where practical.

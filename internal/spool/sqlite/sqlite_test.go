@@ -218,6 +218,30 @@ func TestSinkBackfillAtomicCreationAndOrdering(t *testing.T) {
 	if item.ID != "second" || item.SinkName != "sink_b" {
 		t.Fatalf("unexpected independently ordered delivery: %#v", item)
 	}
+	if err := store.MarkDelivered(ctx, item, 1, 204, at); err != nil {
+		t.Fatal(err)
+	}
+	if item, found, err := store.NextDueDelivery(ctx, at.Add(time.Second)); err != nil || found {
+		t.Fatalf("delayed head must block the remaining due event: item=%+v found=%v err=%v", item, found, err)
+	}
+	item, found, err = store.NextDueDelivery(ctx, at.Add(time.Hour))
+	if err != nil || !found || item.ID != "first" || item.SinkName != "sink_a" || item.Attempts != 1 {
+		t.Fatalf("retry must become eligible at its exact deadline: item=%+v found=%v err=%v", item, found, err)
+	}
+	if err := store.MarkFailed(ctx, item, 2, true, at, "permanent", 400, at); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = store.NextDueDelivery(ctx, at.Add(time.Second))
+	if err != nil || !found || item.ID != "second" || item.SinkName != "sink_a" {
+		t.Fatalf("terminal head must release the next event: item=%+v found=%v err=%v", item, found, err)
+	}
+	if err := store.RedriveDelivery(ctx, "sink_a", "urn:test", "first", at); err != nil {
+		t.Fatal(err)
+	}
+	item, found, err = store.NextDueDelivery(ctx, at.Add(time.Second))
+	if err != nil || !found || item.ID != "first" || item.SinkName != "sink_a" || item.Attempts != 0 {
+		t.Fatalf("redrive must restore the earlier event as head: item=%+v found=%v err=%v", item, found, err)
+	}
 }
 
 func TestSinkConflictRemovalAndRedrive(t *testing.T) {

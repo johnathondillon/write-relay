@@ -43,3 +43,31 @@ jobs:
           cache: true
           cache-dependency-path: go.sum
       - run: make integration-version
+
+  load:
+    name: Load and backlog recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      POSTGRES_VERSION: '18'
+      LOAD_EVENTS: '2000'
+      LOAD_TIMEOUT_SECONDS: '180'
+      LOAD_REPORT: ${{ github.workspace }}/artifacts/load/report.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+      - run: make load
+      - name: Upload load report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: load-recovery-report
+          path: artifacts/load/report.json
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,12 +1,12 @@
 # Implementation plan
 
-Last synchronized: 2026-07-27.
+Last synchronized: 2026-09-10.
 
 ## Current execution target
 
-Terminate real child processes at each capture and delivery durability boundary,
-reopen the same spool, and prove that rollback, replay, acknowledgment, retry,
-and duplicate behavior match the documented at-least-once contract.
+Exercise a larger committed workload through an HTTP receiver outage, forced
+daemon restart, and backlog recovery. Verify identities, payloads, order, and
+receiver deduplication while recording performance and spool-size observations.
 
 ## Milestone 0 — repository scaffold
 
@@ -200,3 +200,27 @@ spool-size policy remain later work.
 - The Docker LMS build and behavior checks passed in a separate disposable
   stack. Stopping its PostgreSQL produced `/readyz` 503 with `/healthz` 200;
   restarting PostgreSQL restored readiness. The user's example data was untouched.
+
+## Load and backlog recovery
+
+- Configurable `make load` runner with disposable PostgreSQL, the real daemon,
+  and an independent durable HTTP receiver; defaults to 10,000 committed events.
+- Healthy baseline, 503 backlog, forced process termination, same-spool restart,
+  and a lost success response that requires receiver deduplication.
+- Exact producer/spool/receiver identity and payload checks, preserved order,
+  checkpoint non-regression, and fully delivered terminal state.
+- JSON throughput, latency, recovery time, and spool-size observations with
+  documented measurement boundaries; no fixed performance assertions.
+- The initial 10,000-event run exposed repeated predecessor scans in delivery
+  selection and timed out after five minutes. Selection now finds each sink's
+  oldest non-terminal row before checking due time, preserving ordering without
+  a schema change; ADR 0005 records the decision.
+- CI runs a bounded 2,000-event scenario and retains the report as an artifact.
+- Local verification on 2026-09-10 passed with Go 1.26.8 and PostgreSQL 18.4:
+  the default 10,000-event run recovered its 9,000-event backlog in 11.64 seconds
+  and verified 10,000 unique receiver records plus a deduplicated retry. These
+  are observations on macOS/arm64, not performance requirements.
+- `make check`, `make race`, `make failure`, `make vuln`, and
+  `make integration-version` passed. A separate race-enabled load run passed
+  with 250 events, batch size 30, and zero padding, exercising partial batches.
+- See [load testing](load-testing.md) for commands, options, and limitations.
