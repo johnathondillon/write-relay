@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgproto3"
 	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/diskspace"
 	"github.com/johnathondillon/write-relay/internal/failure"
 	"github.com/johnathondillon/write-relay/internal/spool"
 )
@@ -23,6 +24,7 @@ type Replicator struct {
 	spool        spool.Spool
 	logger       *slog.Logger
 	hooks        failure.Hooks
+	disk         *diskspace.Guard
 	connected    atomic.Bool
 	transactions atomic.Uint64
 	lastCapture  atomic.Int64
@@ -30,6 +32,7 @@ type Replicator struct {
 
 // CaptureStatus reports observed replication state, not a probe of PostgreSQL.
 type CaptureStatus struct {
+	Disk            diskspace.Status
 	Connected       bool
 	Transactions    uint64
 	LastCaptureUnix int64
@@ -37,7 +40,7 @@ type CaptureStatus struct {
 
 // Status is safe to call concurrently with Run. Counters reset with this instance.
 func (r *Replicator) Status() CaptureStatus {
-	return CaptureStatus{Connected: r.connected.Load(), Transactions: r.transactions.Load(), LastCaptureUnix: r.lastCapture.Load()}
+	return CaptureStatus{Disk: r.disk.Snapshot(), Connected: r.connected.Load(), Transactions: r.transactions.Load(), LastCaptureUnix: r.lastCapture.Load()}
 }
 
 func NewReplicator(cfg config.Config, durableSpool spool.Spool, logger *slog.Logger) *Replicator {
@@ -52,7 +55,43 @@ func NewReplicatorWithHooks(
 	logger *slog.Logger,
 	hooks failure.Hooks,
 ) *Replicator {
-	return &Replicator{cfg: cfg, spool: durableSpool, logger: logger, hooks: hooks}
+	return &Replicator{cfg: cfg, spool: durableSpool, logger: logger, hooks: hooks, disk: diskspace.New(cfg.Spool.Path, cfg.Spool.DiskSpace)}
+}
+
+// NewReplicatorWithDiskProbe injects filesystem observations for tests. There is
+// no production switch for fake space measurements.
+func NewReplicatorWithDiskProbe(cfg config.Config, store spool.Spool, logger *slog.Logger, probe diskspace.Probe) *Replicator {
+	r := NewReplicator(cfg, store, logger)
+	r.disk = diskspace.NewWithProbe(cfg.Spool.Path, cfg.Spool.DiskSpace, probe)
+	return r
+}
+
+func (r *Replicator) checkDisk(force bool) error {
+	before := r.disk.Snapshot()
+	err := r.disk.Check(force)
+	after := r.disk.Snapshot()
+	if after.Paused && (!before.Paused || after.Reason != before.Reason) {
+		r.logger.Warn("capture paused; PostgreSQL WAL retention may grow", "reason", after.Reason)
+	} else if before.Paused && !after.Paused {
+		r.logger.Info("disk space recovered; capture will replay from the durable checkpoint")
+	}
+	return err
+}
+
+func (r *Replicator) waitForDisk(ctx context.Context) error {
+	timer := time.NewTimer(r.disk.Interval())
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+			if err := r.checkDisk(true); err == nil {
+				return nil
+			}
+			timer.Reset(r.disk.Interval())
+		}
+	}
 }
 
 func (r *Replicator) Run(ctx context.Context) error {
@@ -61,6 +100,13 @@ func (r *Replicator) Run(ctx context.Context) error {
 		err := r.runOnce(ctx)
 		if ctx.Err() != nil {
 			return nil
+		}
+		if errors.Is(err, diskspace.ErrPaused) {
+			if r.waitForDisk(ctx) != nil {
+				return nil
+			}
+			delay = time.Second
+			continue
 		}
 		if isFatalCaptureError(err) {
 			return err
@@ -86,6 +132,9 @@ func (r *Replicator) Run(ctx context.Context) error {
 }
 
 func (r *Replicator) runOnce(ctx context.Context) error {
+	if err := r.checkDisk(true); err != nil {
+		return err
+	}
 	dsn, err := r.cfg.PostgreSQLDSN()
 	if err != nil {
 		return err
@@ -132,7 +181,15 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 	defer r.connected.Store(false)
 
 	for {
-		receiveCtx, cancel := context.WithTimeout(ctx, r.cfg.Postgres.StatusInterval)
+		if err := r.checkDisk(false); err != nil {
+			state.Reset()
+			return err
+		}
+		receiveInterval := r.cfg.Postgres.StatusInterval
+		if r.cfg.Spool.DiskSpace.PauseBelowBytes > 0 {
+			receiveInterval = min(receiveInterval, r.disk.Interval())
+		}
+		receiveCtx, cancel := context.WithTimeout(ctx, receiveInterval)
 		message, receiveErr := connection.ReceiveMessage(receiveCtx)
 		cancel()
 		if receiveErr != nil {
@@ -184,9 +241,9 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 			if batch == nil {
 				continue
 			}
-			result, err := persistThenAcknowledgeWithHooks(ctx, r.spool, *batch, func(ackLSN pglogrepl.LSN) error {
+			result, err := r.persistBatch(ctx, *batch, func(ackLSN pglogrepl.LSN) error {
 				return sendStandbyStatus(ctx, connection, ackLSN)
-			}, r.hooks)
+			})
 			if err != nil {
 				return err
 			}
@@ -201,6 +258,18 @@ func (r *Replicator) runOnce(ctx context.Context) error {
 				"durable_lsn", durableLSN.String())
 		}
 	}
+}
+
+// The final disk check happens after decoding Commit but before any SQLite
+// write or ACK. Pausing drops this batch and reconnect replays it from WAL.
+func (r *Replicator) persistBatch(ctx context.Context, batch spool.CommittedBatch, acknowledge func(pglogrepl.LSN) error) (spool.PersistResult, error) {
+	if err := ctx.Err(); err != nil {
+		return spool.PersistResult{}, err
+	}
+	if err := r.checkDisk(true); err != nil {
+		return spool.PersistResult{}, err
+	}
+	return persistThenAcknowledgeWithHooks(ctx, r.spool, batch, acknowledge, r.hooks)
 }
 
 func (r *Replicator) startLSN(ctx context.Context, dsn string) (pglogrepl.LSN, error) {

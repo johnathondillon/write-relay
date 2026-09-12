@@ -2,7 +2,9 @@ package monitoring
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"github.com/johnathondillon/write-relay/internal/diskspace"
 	"io"
 	"log/slog"
 	"net"
@@ -171,5 +173,54 @@ func TestMetricsStatesRetentionAndPrivacy(t *testing.T) {
 	}
 	if got := label("a\\b\"c\nd"); got != `"a\\b\"c\nd"` {
 		t.Fatalf("invalid Prometheus escaping: %s", got)
+	}
+}
+
+func TestDiskPauseReadinessAndMetrics(t *testing.T) {
+	capture := postgres.CaptureStatus{Connected: true, Disk: diskspace.Status{Enabled: true, PauseBelowBytes: 100, ResumeAtBytes: 200}}
+	server := New("unused", time.Second, func() postgres.CaptureStatus { return capture })
+	server.stats = sqlitespool.Stats{SampledAt: time.Now()}
+	server.sampleOK = true
+	handler := server.handler(t.Context())
+	if get(handler, "/readyz").Code != 503 {
+		t.Fatal("unmeasured disk reported ready")
+	}
+	capture.Disk.SampleFresh = true
+	capture.Disk.AvailableBytes = 99
+	capture.Disk.Paused = true
+	capture.Disk.Reason = "low_disk"
+	for _, reason := range []string{"low_disk", "disk_check_failed"} {
+		capture.Disk.Reason = reason
+		capture.Disk.SampleFresh = reason == "low_disk"
+		response := get(handler, "/readyz")
+		var body map[string]any
+		if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if response.Code != 503 || body["capture_pause_reason"] != reason || body["capture_paused"] != true || get(handler, "/healthz").Code != 200 {
+			t.Fatal(body)
+		}
+		metrics := get(handler, "/metrics").Body.String()
+		if !strings.Contains(metrics, `writerelay_capture_pause{reason="`+reason+`"} 1`) || !strings.Contains(metrics, "writerelay_spool_events 0") {
+			t.Fatal(metrics)
+		}
+		if strings.Contains(metrics, "# TYPE writerelay_disk_available_bytes gauge") != capture.Disk.SampleFresh {
+			t.Fatal("stale free space was exported")
+		}
+	}
+	capture.Disk.Paused = false
+	capture.Disk.Reason = ""
+	capture.Disk.SampleFresh = true
+	capture.Disk.AvailableBytes = 200
+	if get(handler, "/readyz").Code != 200 {
+		t.Fatal("recovery not ready")
+	}
+	capture.Disk.SampleFresh = false
+	if get(handler, "/readyz").Code != 503 {
+		t.Fatal("stale disk sample ready")
+	}
+	capture.Disk.Enabled = false
+	if get(handler, "/readyz").Code != 200 {
+		t.Fatal("disabled protection changed readiness")
 	}
 }

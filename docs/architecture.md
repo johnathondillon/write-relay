@@ -54,6 +54,8 @@ single delivery worker
   and redrive.
 - `internal/monitoring` serves optional HTTP health checks and cached spool
   metrics, sampling through an independent read-only connection.
+- `internal/diskspace` probes available filesystem bytes and gates capture with
+  optional pause/recovery thresholds; it does not control delivery or delete data.
 - `internal/app` composes capture, delivery, and monitoring lifecycles over one spool.
 - `internal/cli` composes commands without a large CLI framework.
 - `sql/postgres` is both the administrator-facing SQL asset and the embedded
@@ -74,7 +76,11 @@ Disconnect discards the in-memory transaction; reconnect begins at the last
 durable local checkpoint so PostgreSQL replays incomplete work.
 
 Transactions with no accepted events still commit a new SQLite checkpoint
-before acknowledgment.
+before acknowledgment. When disk-space protection is enabled, each complete
+batch must pass a fresh available-space check before this write. A failed check
+closes the stream without persisting or acknowledging the batch; delivery
+continues while capture waits to replay from the durable checkpoint. See
+[ADR 0010](adr/0010-disk-space-capture-admission.md).
 
 ## LSN selection and acknowledgment
 
@@ -200,7 +206,9 @@ The optional monitoring listener serves `/healthz`, `/readyz`, and `/metrics`.
 Capture exposes atomic observations of stream startup/exit and successfully
 persisted batches whose standby status updates were sent. These observations
 never control capture or delivery. Readiness requires observed streaming and a
-fresh successful spool sample; receiver failures are visible in delivery gauges.
+fresh successful spool sample, plus a fresh unpaused disk check when protection
+is enabled; receiver failures are visible in delivery gauges. Disk guard status
+is observed separately from these monitoring-only samples.
 A background sampler uses the existing read-only stats API with a deadline;
 HTTP handlers only read its cache. Failed/stale samples suppress spool metrics
 and fail readiness. The app cancels and joins all components before closing the

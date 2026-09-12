@@ -31,13 +31,20 @@ inside the container and restrict any published host port to loopback, as the
 | Endpoint | HTTP 200 | HTTP 503 |
 | --- | --- | --- |
 | `/healthz` | The daemon's HTTP server is responding and shutdown has not started. | Shutdown is in progress. |
-| `/readyz` | Replication streaming has started and the latest spool snapshot succeeded and is fresh. | Capture has not started, has observed a disconnect, the spool sample is unavailable/stale, or shutdown has started. |
+| `/readyz` | Replication streaming has started, the spool sample is fresh, and enabled disk protection has a fresh, unpaused sample. | Capture is disconnected/paused, a required sample is unavailable/stale, or shutdown has started. |
 
 Readiness returns a small JSON object:
 
 ```json
-{"capture_connected":true,"ready":true,"spool_sample_fresh":true}
+{"capture_connected":true,"ready":true,"spool_sample_fresh":true,"capture_paused":false,"capture_pause_reason":"","disk_protection_enabled":false,"disk_sample_fresh":false}
 ```
+
+Disk protection is disabled in the JSON example above. When enabled, low space
+or a failed probe pauses capture and fails readiness while liveness stays healthy.
+`capture_pause_reason` is `low_disk`, `disk_check_failed`, or empty. Disk samples
+expire after twice their own `spool.disk_space.check_interval`; a stale sample
+also fails readiness. See the [disk-space guide](disk-space.md) for thresholds,
+available-byte gauges, recovery, and PostgreSQL WAL monitoring.
 
 An idle database can be ready without producing events. A receiver outage,
 retry backlog, or dead letter does **not** make capture unready. Use delivery
@@ -145,4 +152,7 @@ up{job="writerelay"} == 0
 
 The five-minute waiting threshold is an example; choose a delay appropriate to
 your application. Inspect and redrive dead letters using the CLI. Monitor host
-free space and PostgreSQL slot WAL retention separately.
+free space and PostgreSQL slot WAL retention separately. Optional disk protection
+adds local available-space metrics and pause signals; the
+[disk-space guide](disk-space.md#monitor-postgresql-wal-as-well) provides a
+PostgreSQL retained-WAL query. A capture pause can increase retained WAL.

@@ -39,6 +39,10 @@
 22. Payload pruning requires at least one delivery and success before the cutoff
     for every associated sink. It never removes identity, digest, history, or
     checkpoint state. Pruned identities cannot gain new deliveries or payloads.
+23. Enabled disk-space protection admits no batch or checkpoint write when a
+    fresh pre-persist probe is below its threshold or fails. A pause advances no
+    ACK for unpersisted data. Existing delivery remains independent, and capture
+    recovery replays from the durable checkpoint.
 
 ## Answers required by Milestone 1
 
@@ -140,3 +144,19 @@ output errors without resolving database or destination secrets.
 These tests use child processes and `os.Exit` or an external process kill, then
 reopen the same SQLite file. They do not simulate a crash by returning an error
 through normal deferred cleanup.
+
+## Disk-space admission evidence
+
+The pre-persist test starts with a cached healthy measurement, then forces low
+space before both event and zero-event batches and proves no persistence or ACK
+callback runs. Threshold tests cover exact boundaries, hysteresis, errors, and
+stale observations. Cancellation exits the pause without opening PostgreSQL.
+A child exits without cleanup while a batch is blocked; reopening finds no event,
+delivery, or checkpoint, and replay commits before acknowledgment.
+
+The PostgreSQL 14–18 matrix holds capture paused while a pending delivery succeeds,
+asserts the durable checkpoint and slot confirmed-flush position stay unchanged,
+restarts over the same spool, and verifies ordered recovery at the higher threshold.
+A later committed marker bounds absence checks for a rolled-back event. Probe
+errors pause and recover through the same mechanism. See ADR 0010 and the
+[disk-space guide](disk-space.md) for operational limits.

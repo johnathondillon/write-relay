@@ -98,7 +98,9 @@ separate operation; see [SQLite's VACUUM documentation](https://www.sqlite.org/l
 Identity, metadata (including subject), and delivery-history rows remain and
 still consume space. This is not a hard spool-size cap or secure erasure: old
 bytes may remain in free pages, WAL files, snapshots, or backups. Continue to
-monitor disk and retained PostgreSQL WAL.
+monitor disk and retained PostgreSQL WAL. Optional
+[disk-space protection](disk-space.md) can pause capture at a configured reserve;
+pruning does not guarantee enough additional filesystem free space to resume.
 
 See [ADR 0007](adr/0007-delivered-payload-retention.md) for the transaction and
 replay decisions and the [Nuxt walkthrough](../examples/nuxt-lms/README.md#try-payload-cleanup)

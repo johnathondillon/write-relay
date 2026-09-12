@@ -13,6 +13,12 @@ postgres:
 spool:
   path: ./data/writerelay.sqlite
   max_event_bytes: 262144
+  # Optional capture admission policy; omitted/zero disables it.
+  # See docs/disk-space.md for reserve sizing and PostgreSQL WAL monitoring.
+  # disk_space:
+  #   pause_below_bytes: 536870912
+  #   resume_at_bytes: 1073741824
+  #   check_interval: 5s
 
 delivery:
   poll_interval: 1s

@@ -13,6 +13,27 @@ import (
 // This small fixed set uses Prometheus text exposition 0.0.4. Labels are limited
 // to durable sink names and fixed categories; event identities never appear.
 func writeMetrics(w io.Writer, capture postgres.CaptureStatus, stats sqlitespool.Stats, fresh bool, now time.Time) {
+	disk := capture.Disk
+	gauge(w, "capture_paused", "Capture is paused by disk-space protection.", boolNumber(disk.Paused))
+	header(w, "capture_pause", "Capture pause reason; fixed categories.", "gauge")
+	for _, reason := range []string{"low_disk", "disk_check_failed"} {
+		fmt.Fprintf(w, "writerelay_capture_pause{reason=%s} %d\n", label(reason), boolNumber(disk.Paused && disk.Reason == reason))
+	}
+	gauge(w, "disk_protection_enabled", "Whether capture disk-space protection is enabled.", boolNumber(disk.Enabled))
+	if disk.Enabled {
+		gauge(w, "disk_sample_fresh", "Latest disk-space probe succeeded and is fresh.", boolNumber(disk.SampleFresh))
+		var attempted int64
+		if !disk.SampledAt.IsZero() {
+			attempted = disk.SampledAt.Unix()
+		}
+		gauge(w, "disk_sample_timestamp_seconds", "Unix time of the latest disk-space probe attempt, or zero.", attempted)
+		gauge(w, "disk_pause_below_bytes", "Capture pauses below this available-byte threshold.", disk.PauseBelowBytes)
+		gauge(w, "disk_resume_at_bytes", "Paused capture resumes at this available-byte threshold.", disk.ResumeAtBytes)
+		if disk.SampleFresh {
+			header(w, "disk_available_bytes", "Bytes available to this user on the spool filesystem; not reserved space.", "gauge")
+			fmt.Fprintf(w, "writerelay_disk_available_bytes %d\n", disk.AvailableBytes)
+		}
+	}
 	gauge(w, "capture_connected", "Replication stream started and has not observed a disconnect.", boolNumber(capture.Connected))
 	header(w, "capture_transactions_total", "Transactions persisted and status updates sent by this process, including empty batches and replays.", "counter")
 	fmt.Fprintf(w, "writerelay_capture_transactions_total %d\n", capture.Transactions)
