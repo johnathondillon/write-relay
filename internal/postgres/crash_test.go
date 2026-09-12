@@ -4,6 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"github.com/johnathondillon/write-relay/internal/config"
+	"github.com/johnathondillon/write-relay/internal/diskspace"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +112,7 @@ func TestPostgresCrashHelper(t *testing.T) {
 	storeHooks := failure.Hooks{}
 	ackHooks := failure.Hooks{}
 	switch mode {
+	case "paused_before_persist":
 	case "after_commit_before_ack":
 		storeHooks.AfterSpoolCommit = crashPostgresProcess
 	case "after_ack":
@@ -129,6 +134,17 @@ func TestPostgresCrashHelper(t *testing.T) {
 		context.Background(), []delivery.SinkRegistration{registration},
 	); err != nil {
 		t.Fatal(err)
+	}
+	if mode == "paused_before_persist" {
+		cfg := config.Config{Spool: config.SpoolConfig{DiskSpace: config.DiskSpaceConfig{PauseBelowBytes: 100, ResumeAtBytes: 200}}}
+		r := NewReplicatorWithDiskProbe(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)), func(string) (uint64, error) { return 0, nil })
+		_, err := r.persistBatch(context.Background(), acknowledgmentCrashBatch(), func(pglogrepl.LSN) error {
+			return os.WriteFile(os.Getenv("WRITERELAY_TEST_ACK_PATH"), []byte("unexpected"), 0600)
+		})
+		if !errors.Is(err, diskspace.ErrPaused) {
+			t.Fatal(err)
+		}
+		crashPostgresProcess()
 	}
 	_, err = persistThenAcknowledgeWithHooks(
 		context.Background(), store, acknowledgmentCrashBatch(),
@@ -199,4 +215,38 @@ func acknowledgmentCrashBatch() spool.CommittedBatch {
 
 func crashPostgresProcess() {
 	os.Exit(postgresCrashExitCode)
+}
+
+func TestProcessCrashWhileDiskPausedLeavesBatchForReplay(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "spool.sqlite")
+	ackPath := path + ".ack"
+	runPostgresCrashChild(t, "paused_before_persist", path, ackPath)
+	if _, err := os.Stat(ackPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("paused batch acknowledged", err)
+	}
+	store, err := sqlitespool.Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if n, err := store.EventCount(t.Context()); err != nil || n != 0 {
+		t.Fatal(n, err)
+	}
+	if lsn, err := store.LastDurableLSN(t.Context()); err != nil || lsn != 0 {
+		t.Fatal(lsn, err)
+	}
+	if rows, err := store.ListDeliveries(t.Context(), "", 10); err != nil || len(rows) != 0 {
+		t.Fatal(rows, err)
+	}
+	cfg := config.Config{Spool: config.SpoolConfig{DiskSpace: config.DiskSpaceConfig{PauseBelowBytes: 100, ResumeAtBytes: 200}}}
+	r := NewReplicatorWithDiskProbe(cfg, store, slog.New(slog.NewTextHandler(io.Discard, nil)), func(string) (uint64, error) { return 200, nil })
+	_, err = r.persistBatch(t.Context(), acknowledgmentCrashBatch(), func(lsn pglogrepl.LSN) error {
+		// Inspect committed state at ACK time: persistence must already be durable.
+		assertCapturedCrashState(t, store)
+		return os.WriteFile(ackPath, []byte(lsn.String()), 0600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertCapturedCrashState(t, store)
 }

@@ -163,8 +163,9 @@ This section records only commands actually executed in this workspace.
 - [ ] C# SDK, full CloudEvents conformance coverage, and receiver helpers for
   other languages.
 
-The TypeScript package remains unpublished. Automatic retention and a hard
-spool-size policy remain later work.
+The TypeScript package remains unpublished. Optional capture disk-space
+protection is available. Automatic retention and a hard spool-size policy remain
+later work.
 
 ### TypeScript receiver verification
 
@@ -289,3 +290,30 @@ spool-size policy remain later work.
   `make integration-version` passed. A separate race-enabled load run passed
   with 250 events, batch size 30, and zero padding, exercising partial batches.
 - See [load testing](load-testing.md) for commands, options, and limitations.
+
+
+## Capture disk-space protection
+
+- Optional available-byte thresholds pause capture below a reserve and resume
+  at a higher threshold. The probe targets the existing spool filesystem on
+  Linux/macOS and runs before connection, periodically, and before every batch.
+- Low space or probe failure disconnects capture without writing or acknowledging
+  unpersisted work. The independent delivery worker can continue; recovery replays
+  from the existing SQLite checkpoint. Default configurations remain disabled.
+- Readiness and metrics report pause reasons, sample freshness, available space,
+  and thresholds. The runbook documents reserve sizing, PostgreSQL WAL monitoring,
+  slot-loss risk, and the distinction from payload pruning or a hard spool cap.
+- Unit tests cover thresholds, probe failures, forced admission checks, unchanged
+  ACK ordering, stale monitoring, and cancellation. A process-crash test verifies
+  no paused batch/checkpoint/ACK survives and later replay commits safely.
+- On 2026-09-12, `make check`, `make race`, `make failure`, and `make vuln`
+  passed with Go 1.26.8. The PostgreSQL 14.24/15.19/16.15/17.11/18.4 matrix passed
+  pause/ACK stability, ongoing delivery, low-space restart, hysteresis, ordered
+  replay, rollback absence, and measurement-error recovery.
+- The race-enabled PostgreSQL 18.4 suite passed. A disposable non-root Linux
+  container passed real filesystem probing, low-space startup, health/readiness
+  and metric checks, and clean shutdown without filling the host disk.
+- The existing 2,000-event load/outage/restart scenario passed with protection
+  disabled, confirming the default capture path still handles backlog recovery.
+- See [ADR 0010](adr/0010-disk-space-capture-admission.md) and the
+  [disk-space guide](disk-space.md).

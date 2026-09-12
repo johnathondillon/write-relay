@@ -123,10 +123,13 @@ func (s *Server) handler(ctx context.Context) http.Handler {
 	})
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		_, fresh := s.snapshot(time.Now())
-		connected := s.capture().Connected
-		ready := ctx.Err() == nil && connected && fresh
-		writeHealth(w, ready, map[string]bool{
-			"ready": ready, "capture_connected": connected, "spool_sample_fresh": fresh,
+		capture := s.capture()
+		diskReady := !capture.Disk.Enabled || (capture.Disk.SampleFresh && !capture.Disk.Paused)
+		ready := ctx.Err() == nil && capture.Connected && fresh && diskReady
+		writeHealth(w, ready, map[string]any{
+			"ready": ready, "capture_connected": capture.Connected, "spool_sample_fresh": fresh,
+			"capture_paused": capture.Disk.Paused, "capture_pause_reason": capture.Disk.Reason,
+			"disk_protection_enabled": capture.Disk.Enabled, "disk_sample_fresh": capture.Disk.SampleFresh,
 		})
 	})
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
@@ -139,7 +142,7 @@ func (s *Server) handler(ctx context.Context) http.Handler {
 	return mux
 }
 
-func writeHealth(w http.ResponseWriter, ok bool, body map[string]bool) {
+func writeHealth(w http.ResponseWriter, ok bool, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if !ok {

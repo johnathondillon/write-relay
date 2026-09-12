@@ -168,3 +168,39 @@ func TestMonitoringConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestDiskSpaceConfiguration(t *testing.T) {
+	defaults, err := Decode(strings.NewReader(validConfig))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaults.Spool.DiskSpace.PauseBelowBytes != 0 || defaults.Spool.DiskSpace.CheckInterval.String() != "5s" {
+		t.Fatal(defaults.Spool.DiskSpace)
+	}
+	for _, test := range []struct {
+		yaml  string
+		valid bool
+	}{
+		{"pause_below_bytes: 100\n    resume_at_bytes: 200", true},
+		{"pause_below_bytes: 0\n    resume_at_bytes: 0", true},
+		{"pause_below_bytes: -1", false},
+		{"pause_below_bytes: 100\n    resume_at_bytes: -1", false},
+		{"pause_below_bytes: 100", false},
+		{"resume_at_bytes: 100", false},
+		{"pause_below_bytes: 100\n    resume_at_bytes: 100", false},
+		{"pause_below_bytes: 100\n    resume_at_bytes: 99", false},
+		{"check_interval: 0s", false},
+		{"check_interval: 61s", false},
+		{"check_interval: nonsense", false},
+		{"pause_below_bytes: 9223372036854775808", false},
+		{"unknown_threshold: 100", false},
+	} {
+		t.Run(test.yaml, func(t *testing.T) {
+			yaml := strings.Replace(validConfig, "  max_event_bytes: 262144", "  max_event_bytes: 262144\n  disk_space:\n    "+test.yaml, 1)
+			_, err := Decode(strings.NewReader(yaml))
+			if (err == nil) != test.valid {
+				t.Fatal(err)
+			}
+		})
+	}
+}

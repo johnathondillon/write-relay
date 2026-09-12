@@ -395,9 +395,13 @@ func startRuntime(
 	logger *slog.Logger,
 ) (func() error, *commitpostgres.Replicator) {
 	t.Helper()
+	return startRuntimeWithReplicator(t, cfg, store, sender, logger, commitpostgres.NewReplicator(cfg, store, logger))
+}
+
+func startRuntimeWithReplicator(t *testing.T, cfg config.Config, store *sqlitespool.Store, sender delivery.Sink, logger *slog.Logger, replicator *commitpostgres.Replicator) (func() error, *commitpostgres.Replicator) {
+	t.Helper()
 	runCtx, stopRun := context.WithCancel(context.Background())
 	runDone := make(chan error, 2)
-	replicator := commitpostgres.NewReplicator(cfg, store, logger)
 	if replicator.Status().Connected {
 		t.Fatal("replicator ready before startup")
 	}

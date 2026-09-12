@@ -133,6 +133,17 @@ rejecting changed content under an existing key. See the guides for setup,
 error handling, and retention requirements. The Nuxt certificate service and
 Go receiver example demonstrate their use.
 
+## Disk-space protection
+
+Optional [disk-space protection](docs/disk-space.md) pauses capture below a
+configured filesystem reserve and resumes at a higher recovery threshold.
+Already-spooled delivery continues. Unpersisted transactions are not acknowledged;
+PostgreSQL replays them from the durable checkpoint when capture resumes.
+Readiness and metrics expose the pause and available space.
+
+This is not a hard spool-size cap or automatic cleanup. PostgreSQL may retain more
+WAL while capture is paused; the guide includes monitoring and recovery steps.
+
 ## Crash-recovery proof
 
 `make failure` runs ordinary persistence and delivery code in child processes
@@ -410,6 +421,7 @@ redrive, redirects, signatures, timeouts, and real child-process crash recovery.
 - [Correctness invariants](docs/correctness.md)
 - [Security model](docs/security-model.md)
 - [Health checks and monitoring](docs/monitoring.md)
+- [Disk-space protection](docs/disk-space.md)
 - [Load and backlog recovery](docs/load-testing.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Preview installation](docs/installation.md)

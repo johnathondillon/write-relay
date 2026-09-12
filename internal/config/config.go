@@ -45,8 +45,35 @@ type PostgresConfig struct {
 }
 
 type SpoolConfig struct {
-	Path          string `yaml:"path"`
-	MaxEventBytes int    `yaml:"max_event_bytes"`
+	Path          string          `yaml:"path"`
+	MaxEventBytes int             `yaml:"max_event_bytes"`
+	DiskSpace     DiskSpaceConfig `yaml:"disk_space"`
+}
+
+type DiskSpaceConfig struct {
+	PauseBelowBytes    int64         `yaml:"pause_below_bytes"`
+	ResumeAtBytes      int64         `yaml:"resume_at_bytes"`
+	CheckInterval      time.Duration `yaml:"-"`
+	CheckIntervalValue string        `yaml:"check_interval"`
+}
+
+func (c *DiskSpaceConfig) setDefaultsAndValidate() error {
+	if c.PauseBelowBytes < 0 || c.ResumeAtBytes < 0 {
+		return errors.New("spool.disk_space thresholds must be non-negative byte counts")
+	}
+	if c.PauseBelowBytes == 0 {
+		if c.ResumeAtBytes != 0 {
+			return errors.New("spool.disk_space.resume_at_bytes requires pause_below_bytes")
+		}
+	} else if c.ResumeAtBytes <= c.PauseBelowBytes {
+		return errors.New("spool.disk_space.resume_at_bytes must exceed pause_below_bytes")
+	}
+	if c.CheckIntervalValue == "" {
+		c.CheckIntervalValue = "5s"
+	}
+	var err error
+	c.CheckInterval, err = boundedDuration("spool.disk_space.check_interval", c.CheckIntervalValue, time.Second, time.Minute)
+	return err
 }
 
 type DeliveryConfig struct {
@@ -180,6 +207,9 @@ func (c *Config) setDefaultsAndValidate() error {
 	}
 	if c.Spool.MaxEventBytes < 1 || c.Spool.MaxEventBytes > DefaultMaxEventBytes {
 		return fmt.Errorf("spool.max_event_bytes must be between 1 and %d", DefaultMaxEventBytes)
+	}
+	if err := c.Spool.DiskSpace.setDefaultsAndValidate(); err != nil {
+		return err
 	}
 	if err := c.Delivery.setDefaultsAndValidate(); err != nil {
 		return err
