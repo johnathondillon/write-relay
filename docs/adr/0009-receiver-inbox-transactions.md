@@ -41,3 +41,31 @@ swallowed errors, and actual concurrent lock waits through commit and rollback.
 The LMS verifier exercises the shared helper after a committed receiver write
 loses its HTTP response. These checks do not change the daemon's durability,
 acknowledgment, delivery ordering, or retry decisions.
+
+## Go receiver API and compatibility matrix
+
+The Go SDK provides `WithInbox` for `*pgxpool.Pool` and `WithInboxSQL` for
+`*sql.DB`. Their callbacks expose query methods without transaction control or
+connection access. The Go schema generator uses the same columns, identifier
+restrictions, and raw-byte SHA-256 format as TypeScript. A compatible existing
+inbox can be reused when changing receiver languages. Empty Go table fields use
+the defaults; TypeScript uses omitted fields for defaults.
+
+Both Go APIs explicitly select `READ COMMITTED`. Before commit, they execute a
+statement that fails if the callback swallowed an SQL error and left PostgreSQL
+in an aborted transaction. This protects the SQL API even though `database/sql`
+does not expose PostgreSQL's commit command tag. pgx also rejects a ROLLBACK tag
+from Commit. Errors yield an empty result, so callers cannot mistake an uncertain
+commit for a processed or duplicate success.
+
+Deferred rollback covers callback errors, request cancellation, and panic
+unwinding. pgx cleanup gets a fresh five-second context; `database/sql` owns its
+transaction cancellation and cleanup through its driver. Neither API retries
+SQL or suppresses a callback panic. Callback code must finish queries and close
+rows before returning, avoid concurrent transaction use, and leave transaction
+control to the helper.
+
+The Go compatibility suite exercises both drivers and mixed-driver concurrent
+attempts. A runnable Go HTTP receiver has lost-response and rollback/retry tests
+in the same PostgreSQL 14–18 matrix. TypeScript receiver tests now run in their
+own disposable PostgreSQL 14–18 matrix, independently of the complete LMS check.

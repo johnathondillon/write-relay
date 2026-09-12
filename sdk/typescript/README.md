@@ -178,8 +178,13 @@ docker compose run --rm --no-deps verify
 This exercises the SDK against PostgreSQL and the daemon: commit delivers,
 rollback leaves neither the business record nor a delivered event, concurrent
 producer requests stay idempotent, outages retry, and a lost response produces
-a duplicate with the same delivery key. CI runs this workflow on SDK changes.
+a duplicate with the same delivery key. CI runs the LMS workflow and a separate
+receiver integration matrix against PostgreSQL 14–18 on SDK changes.
 
 The receiver tests use disposable tables to verify atomic inbox/business writes,
 conflicts, and concurrent attempts waiting for commit or rollback. See the
 [inbox guide](INBOX.md#verify-the-behavior) for details and version evidence.
+
+Run `make inbox-typescript-matrix` from the repository root for the standalone
+receiver compatibility matrix, or `POSTGRES_VERSION=14 make inbox-typescript`
+for one version. These commands manage disposable databases automatically.

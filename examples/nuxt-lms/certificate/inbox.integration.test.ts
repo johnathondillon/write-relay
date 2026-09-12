@@ -42,6 +42,14 @@ before(async () => {
     process.env.CERTIFICATE_DATABASE_URL,
     "run inside the certificate container",
   );
+  const version = await pool.query(
+    "SELECT current_setting('server_version') AS version, current_setting('server_version_num')::int AS number",
+  );
+  console.log(`TypeScript receiver inbox: PostgreSQL ${version.rows[0].version}`);
+  const expected = process.env.WRITERELAY_INBOX_POSTGRES_MAJOR;
+  if (expected) {
+    assert.equal(Math.floor(version.rows[0].number / 10000), Number(expected));
+  }
   await pool.query(inboxTableSQL({ table }));
   await pool.query(`CREATE TABLE "${effects}" (id text PRIMARY KEY)`);
 });

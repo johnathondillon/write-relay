@@ -68,7 +68,13 @@ same matrix locally with `make integration-matrix`, or select one version with
 start disposable Docker Compose databases on automatically assigned loopback
 ports, verify the server major, and clean up their own containers and anonymous
 volumes on exit. They leave the persistent development and LMS databases alone.
-Each test logs the exact server version for compatibility evidence.
+Each test logs the exact server version for compatibility evidence. The matrix
+also runs the Go receiver example's HTTP rollback and lost-response tests.
+
+TypeScript receiver changes should pass `make inbox-typescript-matrix`, which
+builds the receiver test image and tests PostgreSQL 14–18 without starting the
+LMS. Use `POSTGRES_VERSION=14 make inbox-typescript` for a single major. Each
+run verifies the server version and removes its own containers and volumes.
 
 CI also runs a bounded load/outage/restart scenario. Use `make load` for the
 default 10,000-event workload, or `LOAD_EVENTS=2000 make load` for the CI-sized

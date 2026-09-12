@@ -336,7 +336,10 @@ docker compose exec -T certificate node --test certificate/inbox.integration.tes
 These tests create and drop uniquely named tables; they do not alter the
 example's inbox or certificates. They verify rollback, conflicting content, and
 concurrent attempts waiting for the first transaction to commit or roll back.
-CI runs both commands after building the stack.
+CI runs the LMS verifier and a separate receiver compatibility matrix against
+PostgreSQL 14–18. From the repository root, run `make inbox-typescript-matrix`
+to exercise that matrix without starting the LMS; each run cleans up its own
+database and test container.
 
 For Node development (Node 22.18+),
 build the local SDK first. Starting in `examples/nuxt-lms`:

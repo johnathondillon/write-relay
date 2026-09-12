@@ -1,0 +1,17 @@
+name: writerelay-go-receiver
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: receiver
+      POSTGRES_PASSWORD: receiver-example-password
+      PGDATA: /var/lib/postgresql/receiver-data
+    ports: ["127.0.0.1:${RECEIVER_POSTGRES_PORT:-55433}:5432"]
+    volumes: ["receiver-data:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres", "-d", "receiver"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+volumes:
+  receiver-data:

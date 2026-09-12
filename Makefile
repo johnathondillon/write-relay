@@ -1,4 +1,4 @@
-.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration integration-version integration-matrix load package
+.PHONY: help fmt fmt-check verify test failure race vet vuln lint build check postgres-up postgres-down setup integration integration-version integration-matrix load package inbox-typescript inbox-typescript-matrix
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "%-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -46,7 +46,7 @@ setup: ## Install SQL objects and create the development slot
 	go run ./cmd/writerelayd setup --config ./writerelay.yaml --create-slot
 
 integration: postgres-up ## Run Docker-backed integration tests
-	go test -tags=integration -count=1 -v ./tests/integration/...
+	go test -tags=integration -count=1 -v ./tests/integration/... ./examples/go-receiver
 
 integration-version: ## Test a disposable PostgreSQL instance (POSTGRES_VERSION=14..18; default 18)
 	bash scripts/integration-version.sh
@@ -60,3 +60,11 @@ load: ## Run configurable load/outage/restart test (default 10000 events; dispos
 	bash scripts/load.sh
 package: ## Package a preview binary (VERSION=v0.1.0-preview.1; optional GOOS/GOARCH)
 	bash scripts/package-release.sh
+
+inbox-typescript: ## Test the TypeScript receiver on disposable PostgreSQL (POSTGRES_VERSION=14..18)
+	bash scripts/typescript-inbox-version.sh
+
+inbox-typescript-matrix: ## Test the TypeScript receiver against PostgreSQL 14 through 18
+	@result=0; for version in 14 15 16 17 18; do \
+		POSTGRES_VERSION=$$version bash scripts/typescript-inbox-version.sh || result=1; \
+	done; exit $$result
