@@ -2,9 +2,9 @@ name: nuxt-lms-example
 
 on:
   push:
-    paths: ['examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+    paths: ['compose.inbox.yaml', 'compose.integration.yaml', 'scripts/typescript-inbox-version.sh', 'Makefile', 'examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
   pull_request:
-    paths: ['examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
+    paths: ['compose.inbox.yaml', 'compose.integration.yaml', 'scripts/typescript-inbox-version.sh', 'Makefile', 'examples/nuxt-lms/**', 'sdk/typescript/**', 'internal/**', 'cmd/**', 'sql/**', 'go.*', 'Dockerfile', '.dockerignore', '.github/workflows/nuxt-lms.yml']
 
 permissions:
   contents: read
@@ -21,9 +21,24 @@ jobs:
         with:
           persist-credentials: false
       - run: docker compose up --build --wait --wait-timeout 120
-      - run: docker compose exec -T certificate node --test certificate/inbox.integration.test.ts
       - run: docker compose run --rm --no-deps verify
       - if: failure()
         run: docker compose logs --no-color
       - if: always()
         run: docker compose down --volumes
+
+  receiver-inbox:
+    name: TypeScript inbox / PostgreSQL ${{ matrix.postgres }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ['14', '15', '16', '17', '18']
+    env:
+      POSTGRES_VERSION: ${{ matrix.postgres }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: make inbox-typescript

@@ -1,9 +1,11 @@
-# WriteRelay Go producer SDK
+# WriteRelay Go SDK
 
 The `writerelay` package emits an event through an existing PostgreSQL
 transaction. It supports pgx v5 (including transactions from `pgxpool`) and
 `database/sql`. The application owns its business writes, event identities,
-and commit/rollback decisions. No SDK service needs to be deployed.
+and commit/rollback decisions. The [receiver inbox helper](INBOX.md) also
+provides `WithInbox` and `WithInboxSQL` for committing delivery keys with
+receiver database writes. No SDK service needs to be deployed.
 
 Import it as:
 
@@ -29,7 +31,7 @@ development; remove it when adopting a repository version containing the SDK.
 Install [the SQL function](../../sql/postgres/001_install.sql), grant the
 application role `USAGE` on its schema and `EXECUTE` on the function, and set up
 the relay using the [root quickstart](../../README.md#local-quick-start).
-The SDK does not create database objects or configure the daemon.
+`Emit` does not create database objects or configure the daemon.
 
 This example uses the development `orders` table:
 
@@ -146,7 +148,7 @@ Keep `Source`, `ID`, and the entire event content stable when retrying one
 logical event, including any timestamp. A new ID on each attempt defeats
 deduplication; changed content for an existing identity stops capture.
 
-The SDK does not make application requests idempotent. A connection failure
+`Emit` does not make producer application requests idempotent. A connection failure
 during commit can leave its outcome unknown. Use a unique business/request ID
 and check for an existing committed result before retrying. The
 [Nuxt producer](../../examples/nuxt-lms/server/api/completions.post.ts) illustrates
@@ -154,7 +156,8 @@ that application responsibility.
 
 After capture, the daemon owns delivery retries. Receivers still need to
 deduplicate the stable webhook `Idempotency-Key`; PostgreSQL and a remote
-operation do not commit atomically together. See the [FAQ](../../docs/faq.md).
+operation do not commit atomically together. Use the [inbox helper](INBOX.md)
+for receiver database transactions, and see the [FAQ](../../docs/faq.md).
 
 ## Example and verification
 
@@ -176,3 +179,7 @@ The PostgreSQL integration suite exercises both pgxpool transactions and
 error paths leave no business/event records, and identical re-emission stays
 deduplicated. A later committed marker bounds absence checks. Existing CI runs
 these tests against PostgreSQL 14–18.
+
+The [Go receiver example](../../examples/go-receiver/README.md) demonstrates
+HTTP duplicate handling, rollback, and a lost response after commit. Its tests
+and the receiver SDK tests run in `make integration-version` and the matrix.

@@ -1,0 +1,17 @@
+# Disposable TypeScript receiver compatibility tests; no LMS data or services.
+services:
+  postgres:
+    extends:
+      file: compose.integration.yaml
+      service: postgres
+  inbox-tests:
+    build:
+      context: .
+      dockerfile: examples/nuxt-lms/Dockerfile
+      target: certificate
+    environment:
+      CERTIFICATE_DATABASE_URL: postgres://postgres:integration-test-password@postgres:5432/writerelay
+      WRITERELAY_INBOX_POSTGRES_MAJOR: ${POSTGRES_VERSION:-18}
+    command: ["node", "--test", "certificate/inbox.integration.test.ts"]
+    depends_on:
+      postgres: { condition: service_healthy }

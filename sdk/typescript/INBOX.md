@@ -155,5 +155,17 @@ The first command creates and drops uniquely named test tables in the receiver
 database. It checks commit, rollback, conflicts, swallowed SQL errors, and
 concurrent attempts waiting for commit or rollback. The second exercises the
 complete LMS flow, including a lost response followed by a duplicate delivery.
-CI runs both commands. The receiver integration tests have been exercised locally
-against PostgreSQL 18.4; they do not establish a receiver SDK compatibility matrix.
+CI runs the full LMS verifier and a separate receiver matrix against PostgreSQL
+14–18. To run the receiver matrix without starting the LMS, from the repo root:
+
+```bash
+make inbox-typescript-matrix
+# Or one version:
+POSTGRES_VERSION=14 make inbox-typescript
+```
+
+Each run builds the test image, verifies the server major, and removes its own
+containers and volumes. It does not alter development or LMS data. See the
+[implementation plan](../../docs/implementation-plan.md#go-and-typescript-receiver-compatibility)
+for exact versions exercised. The [Go helper](../go/INBOX.md) uses compatible
+inbox columns and hashes.

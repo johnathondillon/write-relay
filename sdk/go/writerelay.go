@@ -1,5 +1,6 @@
 // Package writerelay emits domain events inside application-owned PostgreSQL
-// transactions. It does not start, commit, roll back, or retry transactions.
+// transactions and consumes deliveries with receiver-owned inbox transactions.
+// Emit leaves transaction control to the caller; WithInbox manages its own.
 package writerelay
 
 import (

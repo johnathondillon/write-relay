@@ -93,10 +93,10 @@ The receiver should use a unique key constraint and save the key and its
 business changes in one database transaction. An already-committed key should
 result in success without repeating the changes. See the
 [certificate example](../README.md#handling-duplicate-webhooks) for the steps.
-TypeScript receivers can use the SDK
-[`withInbox` helper](../sdk/typescript/INBOX.md) to manage this transaction. It
-skips committed duplicates, rejects changed content under the same key, and
-rolls back failed processing so a later delivery can try again.
+Receivers can use [`withInbox` for TypeScript](../sdk/typescript/INBOX.md) or
+[`WithInbox` / `WithInboxSQL` for Go](../sdk/go/INBOX.md) to manage this transaction.
+These helpers skip committed duplicates, reject changed content under the same
+key, and roll back failed processing so a later delivery can try again.
 
 This protects changes within the receiver's database. Additional external
 actions need their own duplicate handling.

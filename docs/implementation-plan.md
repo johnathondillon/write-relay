@@ -157,6 +157,9 @@ This section records only commands actually executed in this workspace.
 - [x] TypeScript receiver inbox helper with atomic business writes, duplicate
   detection, content conflicts, and concurrent commit/rollback tests. The Nuxt
   certificate service uses it with its existing inbox records.
+- [x] Go receiver inbox helpers for pgxpool and `database/sql`, with a runnable
+  HTTP example covering rollback and lost-response retry.
+- [x] Go and TypeScript receiver compatibility tests against PostgreSQL 14–18.
 - [ ] C# SDK, full CloudEvents conformance coverage, and receiver helpers for
   other languages.
 
@@ -174,10 +177,32 @@ spool-size policy remain later work.
   outage recovery and monitoring, and a lost response followed by a duplicate
   delivery with one certificate. These checks ran in a disposable stack.
 - `make check`, `make failure`, and `make vuln` passed. The new receiver helper
-  has not yet been exercised against the full PostgreSQL 14–18 matrix.
-- CI now runs the receiver integration tests before the existing LMS verifier.
+  initially covered PostgreSQL 18.4; the expanded matrix is recorded below.
+- Initial CI coverage ran receiver tests before the LMS verifier; the receiver
+  tests now have a separate compatibility matrix.
   See the [receiver guide](../sdk/typescript/INBOX.md) and ADR 0009 for setup and
   transaction boundaries.
+
+### Go and TypeScript receiver compatibility
+
+- On 2026-09-12, `make integration-matrix` and `make inbox-typescript-matrix`
+  passed against PostgreSQL 14.24, 15.19, 16.15, 17.11, and 18.4.
+- Go coverage includes both receiver APIs, mixed-API concurrent attempts,
+  commit/rollback visibility, conflicts, swallowed SQL errors, cancellation,
+  and panic cleanup. The HTTP example verifies rollback followed by success and
+  a lost response followed by a duplicate with one business record.
+- The TypeScript runner builds the SDK and runs its unit/package tests, then
+  runs the five receiver database tests for each major. It verifies the actual
+  server version and cleans up its own test containers and volumes.
+- `make check`, `make race`, `make failure`, and `make vuln` passed with Go 1.26.8.
+- The finalized Go integration and HTTP tests also passed with the race detector
+  against PostgreSQL 18.4.
+- The native Go receiver command was built and run against a separate disposable
+  PostgreSQL 18.4 database. Initialization, normal delivery, duplicate handling,
+  rollback/retry, and lost-response/retry passed; three orders and three receipts
+  remained after the scenarios, before the test stack was removed.
+- See the [Go receiver guide](../sdk/go/INBOX.md),
+  [runnable example](../examples/go-receiver/README.md), and ADR 0009.
 
 ### Go SDK verification
 

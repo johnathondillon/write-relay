@@ -33,4 +33,4 @@ address=$("${compose[@]}" port postgres 5432)
 export WRITERELAY_INTEGRATION_DSN="postgres://postgres:integration-test-password@${address}/writerelay?sslmode=disable"
 # The test checks the actual server major, so a wrong image cannot pass silently.
 export WRITERELAY_INTEGRATION_POSTGRES_MAJOR="$POSTGRES_VERSION"
-go test -tags=integration -count=1 -timeout=3m -v ./tests/integration/...
+go test -tags=integration -count=1 -timeout=3m -v ./tests/integration/... ./examples/go-receiver

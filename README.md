@@ -49,13 +49,14 @@ Managed-service compatibility remains unverified.
 Milestone 4 includes an unpublished
 [TypeScript/Node SDK](sdk/typescript/README.md), used by the
 [Nuxt LMS example](examples/nuxt-lms/README.md), and a
-[Go producer SDK](sdk/go/README.md) for pgx v5 and `database/sql` transactions.
+[Go SDK](sdk/go/README.md) for pgx v5 and `database/sql` transactions.
 Both validate and emit events through the application's existing PostgreSQL
 transaction. Try the [Go command-line example](examples/go-producer/README.md)
 for commit, rollback, and unchanged-event replay. SQL-only integration remains
-supported. The TypeScript SDK also provides a
-[receiver inbox helper](sdk/typescript/INBOX.md) for committing webhook receipt
-keys with receiver database writes.
+supported. Both SDKs provide receiver inbox helpers for committing webhook
+receipt keys with receiver database writes: [TypeScript](sdk/typescript/INBOX.md)
+and [Go](sdk/go/INBOX.md). Try the [Go receiver example](examples/go-receiver/README.md)
+for a local rollback and lost-response walkthrough.
 
 ## How capture works
 
@@ -126,10 +127,11 @@ the key and certificate together ensures a failure rolls both back, allowing a
 later attempt to try again. This transaction protects changes in the receiver's
 database; any additional external calls need their own duplicate handling.
 
-The TypeScript SDK provides [`withInbox`](sdk/typescript/INBOX.md) for these
-steps, including rejecting changed content under an existing key. The Nuxt
-certificate service uses it; see the guide for setup, error handling, and
-retention requirements.
+The SDKs provide [`withInbox` for TypeScript](sdk/typescript/INBOX.md) and
+[`WithInbox` / `WithInboxSQL` for Go](sdk/go/INBOX.md) for these steps, including
+rejecting changed content under an existing key. See the guides for setup,
+error handling, and retention requirements. The Nuxt certificate service and
+Go receiver example demonstrate their use.
 
 ## Crash-recovery proof
 
