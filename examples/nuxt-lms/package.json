@@ -13,12 +13,12 @@
   },
   "dependencies": {
     "@writerelay/node": "file:../../sdk/typescript",
-    "nuxt": "4.5.2",
-    "pg": "8.23.0"
+    "nuxt": "4.6.1",
+    "pg": "8.23.1"
   },
   "devDependencies": {
     "@types/pg": "^8.15.0",
     "typescript": "~5.9.3",
-    "vue-tsc": "3.3.11"
+    "vue-tsc": "3.3.13"
   }
 }
